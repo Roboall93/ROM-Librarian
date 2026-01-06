@@ -1,0 +1,5 @@
+# Required
+# (No required dependencies - uses Python standard library)
+
+# Optional - for theme support (light/dark mode)
+ttkbootstrap>=1.10.0
