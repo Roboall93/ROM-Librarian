@@ -40,5 +40,14 @@ env/
 Thumbs.db
 nul
 
-# User config (generated at runtime)
+# User config and cache (generated at runtime)
 .rom_librarian_config.json
+.rom_librarian_hash_cache.json
+
+# PyInstaller build artifacts
+build/
+dist/
+release_temp/
+
+# Release packages
+ROM-Librarian-*.zip

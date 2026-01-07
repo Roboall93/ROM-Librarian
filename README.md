@@ -33,6 +33,7 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 
 ### Duplicates Tab
 - **Content-based duplicate detection** using SHA1/MD5 hashing
+- **Persistent hash caching** - re-scans are lightning fast when files haven't changed
 - **Multiple scan modes**: single folder, with subfolders, or entire ROM library
 - **Smart auto-selection** strategies:
   - Keep by region preference (USA > Europe > Japan)
@@ -49,11 +50,21 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 
 ## Installation
 
-### Prerequisites
+### For End Users (Recommended)
+
+1. **Download** the latest release from the [Releases](https://github.com/YOUR_USERNAME/rom-librarian/releases) page
+2. **Extract** the ZIP file to any location on your computer
+3. **Run** `ROM Librarian.exe` from the extracted folder
+
+No Python installation required! The application is fully portable.
+
+### For Developers
+
+#### Prerequisites
 - Python 3.8 or higher
 - Windows (uses Windows-specific APIs for sleep prevention)
 
-### Install Dependencies
+#### Install Dependencies
 
 ```bash
 pip install ttkbootstrap
@@ -61,11 +72,21 @@ pip install ttkbootstrap
 
 > **Note:** ttkbootstrap is optional but recommended for theme support (light/dark mode).
 
-### Run the Application
+#### Run from Source
 
 ```bash
 python rom_manager.py
 ```
+
+#### Building Releases
+
+To create a distributable package:
+
+```bash
+build_release.bat
+```
+
+This will create a ZIP file in the project directory ready for distribution.
 
 ## Usage
 

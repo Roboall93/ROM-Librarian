@@ -29,10 +29,11 @@ except ImportError:
     TTKBOOTSTRAP_AVAILABLE = False
 
 # App version
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # Config file for storing user preferences
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
+HASH_CACHE_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_hash_cache.json")
 ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cartridge.ico")
 
 def set_window_icon(window):
@@ -60,6 +61,24 @@ def save_config(config):
     try:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
+    except:
+        pass
+
+def load_hash_cache():
+    """Load hash cache from file"""
+    try:
+        if os.path.exists(HASH_CACHE_FILE):
+            with open(HASH_CACHE_FILE, 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
+
+def save_hash_cache(cache):
+    """Save hash cache to file"""
+    try:
+        with open(HASH_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
     except:
         pass
 
@@ -107,7 +126,6 @@ class CenteredDialog:
         self.result = None
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(title)
-        self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         set_window_icon(self.dialog)
 
@@ -115,10 +133,29 @@ class CenteredDialog:
         container = tk.Frame(self.dialog, padx=20, pady=20)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Message label (centered)
-        msg_label = tk.Label(container, text=message, wraplength=width-60,
-                            justify=tk.CENTER, anchor=tk.CENTER)
-        msg_label.pack(pady=(0, 20), fill=tk.BOTH, expand=True)
+        # Check if message is long (needs scrolling)
+        line_count = message.count('\n') + 1
+        if line_count > 15 or len(message) > 500:
+            # Use scrollable text widget for long messages
+            self.dialog.resizable(True, True)
+            text_frame = tk.Frame(container)
+            text_frame.pack(pady=(0, 20), fill=tk.BOTH, expand=True)
+
+            scrollbar = tk.Scrollbar(text_frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set,
+                                 height=20, width=60, font=("TkDefaultFont", 9))
+            text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            text_widget.insert("1.0", message)
+            text_widget.config(state=tk.DISABLED)
+            scrollbar.config(command=text_widget.yview)
+        else:
+            # Use simple label for short messages
+            self.dialog.resizable(False, False)
+            msg_label = tk.Label(container, text=message, wraplength=width-60,
+                                justify=tk.CENTER, anchor=tk.CENTER)
+            msg_label.pack(pady=(0, 20), fill=tk.BOTH, expand=True)
 
         # Button container
         btn_container = tk.Frame(container)
@@ -329,8 +366,8 @@ class ROMManager:
     def __init__(self, root, theme="light"):
         self.root = root
         self.root.title("ROM Librarian")
-        self.root.geometry("1000x800")
-        self.root.minsize(800, 700)  # Minimum window size
+        self.root.geometry("1200x900")
+        self.root.minsize(1000, 800)  # Minimum window size
         self.current_theme = theme
 
         # Set application icon
@@ -1414,6 +1451,8 @@ class ROMManager:
         self.duplicate_groups = {}  # hash -> [file_paths]
         self.file_hashes = {}  # file_path -> hash
         self.group_selection = {}  # group_id -> True/False (selected or not)
+        self.hash_cache = load_hash_cache()  # Persistent cache: "path|size|mtime|method" -> hash
+        self.cache_hits = 0  # Track cache performance
 
     def setup_compare_tab(self):
         """Setup the compare collections tab"""
@@ -1986,6 +2025,9 @@ class ROMManager:
         """Load a preset pattern into the input fields"""
         self.pattern_var.set(pattern)
         self.replacement_var.set(replacement)
+        # Auto-update preview when preset is selected
+        if self.files_data:  # Only preview if files are loaded
+            self.preview_rename()
 
     def preview_rename(self):
         """Preview the rename operation"""
@@ -2995,6 +3037,9 @@ class ROMManager:
     def _scan_files_worker(self, scan_folder):
         """Background worker thread for scanning and hashing files"""
         try:
+            # Reset cache hit counter for this scan
+            self.cache_hits = 0
+
             # Get list of files to scan based on mode
             scan_mode = self.scan_mode.get()
             filter_mode = self.dup_filter_mode.get()
@@ -3109,6 +3154,9 @@ class ROMManager:
             # Store filtered count for display
             self.last_filtered_count = filtered_count
 
+            # Save hash cache to disk
+            save_hash_cache(self.hash_cache)
+
             # Display results
             self.root.after(0, lambda: self._display_duplicate_groups())
             self.root.after(0, self._scan_complete)
@@ -3119,8 +3167,22 @@ class ROMManager:
             self.root.after(0, self._scan_complete)
 
     def _hash_file(self, file_path, method='sha1'):
-        """Calculate hash of a file"""
+        """Calculate hash of a file (with caching based on file size and mtime)"""
         try:
+            # Get file metadata for cache key
+            stat = os.stat(file_path)
+            file_size = stat.st_size
+            file_mtime = stat.st_mtime
+
+            # Create cache key: path|size|mtime|method
+            cache_key = f"{file_path}|{file_size}|{file_mtime}|{method}"
+
+            # Check cache first
+            if cache_key in self.hash_cache:
+                self.cache_hits += 1
+                return self.hash_cache[cache_key]
+
+            # Cache miss - calculate hash
             if method == 'md5':
                 hasher = hashlib.md5()
             else:  # sha1
@@ -3131,7 +3193,12 @@ class ROMManager:
                 while chunk := f.read(1048576):
                     hasher.update(chunk)
 
-            return hasher.hexdigest()
+            file_hash = hasher.hexdigest()
+
+            # Store in cache
+            self.hash_cache[cache_key] = file_hash
+
+            return file_hash
         except:
             return None
 
@@ -3246,6 +3313,10 @@ class ROMManager:
         filtered_count = getattr(self, 'last_filtered_count', 0)
         if filtered_count > 0:
             summary += f" | Ignored {filtered_count} non-ROM files"
+
+        # Add cache hit statistics
+        if self.cache_hits > 0:
+            summary += f" | Cache: {self.cache_hits} hits"
 
         self.dup_summary_var.set(summary)
         self.dup_scan_status_var.set("Scan complete")
@@ -3672,18 +3743,18 @@ class ROMManager:
             return
 
         # Ask user for save location with default filename
-        file_path = filedialog.asksaveasfilename(
+        export_file_path = filedialog.asksaveasfilename(
             title="Export Duplicates List",
             defaultextension=".txt",
             initialfile="duplicates.txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
         )
 
-        if not file_path:
+        if not export_file_path:
             return  # User cancelled
 
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(export_file_path, 'w', encoding='utf-8') as f:
                 # Write header
                 f.write("=" * 80 + "\n")
                 f.write("ROM MANAGER - DUPLICATE FILES REPORT\n")
@@ -3720,6 +3791,18 @@ class ROMManager:
                         sorted_groups.append((wasted, file_hash, file_paths))
                 sorted_groups.sort(reverse=True)
 
+                # Build a map of file paths to actions from the tree view
+                file_to_action = {}
+                for group in self.dup_tree.get_children():
+                    for child in self.dup_tree.get_children(group):
+                        child_tags = self.dup_tree.item(child, "tags")
+                        if len(child_tags) >= 3:  # Expecting (tag, file_hash, file_path)
+                            child_path = child_tags[2]  # File path is third element
+                            child_values = self.dup_tree.item(child, "values")
+                            if len(child_values) >= 5:  # Get action from column 4 (index 4)
+                                action = child_values[4]
+                                file_to_action[child_path] = action
+
                 # Write each group
                 for idx, (wasted, file_hash, file_paths) in enumerate(sorted_groups, 1):
                     wasted_mb = wasted / (1024 * 1024)
@@ -3727,21 +3810,11 @@ class ROMManager:
                     f.write(f"Hash: {file_hash}\n")
                     f.write("-" * 80 + "\n")
 
-                    # Get action for each file from tree
-                    file_actions = {}
-                    for group in self.dup_tree.get_children():
-                        for child in self.dup_tree.get_children(group):
-                            child_tags = self.dup_tree.item(child, "tags")
-                            if file_hash in child_tags:
-                                child_path = child_tags[-1]  # Last tag is file path
-                                action = self.dup_tree.set(child, "action")
-                                file_actions[child_path] = action
-
                     # Write files
                     for file_path in file_paths:
                         filename = os.path.basename(file_path)
                         file_size = os.path.getsize(file_path)
-                        action = file_actions.get(file_path, "Delete")
+                        action = file_to_action.get(file_path, "Delete")
 
                         f.write(f"  [{action:6}] {filename}\n")
                         f.write(f"           Size: {self.format_size(file_size)}\n")
@@ -3753,7 +3826,7 @@ class ROMManager:
                 f.write("=" * 80 + "\n")
                 f.write("End of Report\n")
 
-            show_info(self.root, "Export Complete", f"Duplicate list exported to:\n{file_path}")
+            show_info(self.root, "Export Complete", f"Duplicate list exported to:\n{export_file_path}")
 
         except Exception as e:
             show_error(self.root, "Export Error", f"Failed to export list:\n{str(e)}")
