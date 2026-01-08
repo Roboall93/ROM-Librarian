@@ -1,0 +1,58 @@
+name: Build Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: ROM-Librarian-${{ github.ref_name }}-Windows.zip
+            build_cmd: |
+              python -m PyInstaller rom_librarian.spec --clean --noconfirm
+              Compress-Archive -Path "dist\ROM Librarian" -DestinationPath "ROM-Librarian-${{ github.ref_name }}-Windows.zip"
+            shell: pwsh
+          - os: ubuntu-latest
+            artifact_name: ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz
+            build_cmd: |
+              python -m PyInstaller rom_librarian.spec --clean --noconfirm
+              tar -czvf "ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz" -C dist "ROM Librarian"
+            shell: bash
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install ttkbootstrap
+
+      - name: Build executable
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.build_cmd }}
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}
