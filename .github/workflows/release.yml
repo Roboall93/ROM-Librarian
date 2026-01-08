@@ -21,8 +21,8 @@ jobs:
           - os: ubuntu-latest
             artifact_name: ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz
             build_cmd: |
-              python -m PyInstaller rom_librarian.spec --clean --noconfirm
-              tar -czvf "ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz" -C dist "ROM Librarian"
+              python -m PyInstaller rom_manager.py --onefile --noconsole --name "ROM-Librarian" --clean --noconfirm
+              tar -czvf "ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz" -C dist "ROM-Librarian"
             shell: bash
 
     runs-on: ${{ matrix.os }}
