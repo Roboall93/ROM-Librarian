@@ -19,6 +19,8 @@ from tkinter import ttk, filedialog
 from pathlib import Path
 from typing import List, Tuple, Dict
 from datetime import datetime
+import xml.etree.ElementTree as ET
+import zlib
 
 # Try to import ttkbootstrap for theming
 try:
@@ -362,12 +364,80 @@ class ToolTip:
             self.tooltip_window = None
 
 
+def parse_dat_file(dat_path):
+    """
+    Parse a DAT file (No-Intro XML format) and return a dictionary of game entries.
+    Returns: {crc32: game_name, md5: game_name, sha1: game_name}
+    """
+    hash_to_name = {}
+
+    try:
+        tree = ET.parse(dat_path)
+        root = tree.getroot()
+
+        # Iterate through all <game> elements
+        for game in root.findall('game'):
+            game_name = game.get('name', '')
+            if not game_name:
+                continue
+
+            # Get all <rom> entries for this game
+            for rom in game.findall('rom'):
+                # Get hash values
+                crc = rom.get('crc', '').lower()
+                md5 = rom.get('md5', '').lower()
+                sha1 = rom.get('sha1', '').lower()
+
+                # Store mappings for each available hash
+                if crc:
+                    hash_to_name[crc] = game_name
+                if md5:
+                    hash_to_name[md5] = game_name
+                if sha1:
+                    hash_to_name[sha1] = game_name
+
+        return hash_to_name
+
+    except Exception as e:
+        raise Exception(f"Failed to parse DAT file: {str(e)}")
+
+
+def calculate_file_hashes(file_path):
+    """
+    Calculate CRC32, MD5, and SHA1 hashes for a file.
+    Returns: (crc32_hex, md5_hex, sha1_hex)
+    """
+    crc32_hash = 0
+    md5_hash = hashlib.md5()
+    sha1_hash = hashlib.sha1()
+
+    try:
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(1024 * 1024)  # Read 1MB at a time
+                if not chunk:
+                    break
+                crc32_hash = zlib.crc32(chunk, crc32_hash)
+                md5_hash.update(chunk)
+                sha1_hash.update(chunk)
+
+        # Format CRC32 as 8-character hex string
+        crc32_hex = format(crc32_hash & 0xFFFFFFFF, '08x')
+        md5_hex = md5_hash.hexdigest()
+        sha1_hex = sha1_hash.hexdigest()
+
+        return (crc32_hex, md5_hex, sha1_hex)
+
+    except Exception as e:
+        raise Exception(f"Failed to hash file {file_path}: {str(e)}")
+
+
 class ROMManager:
     def __init__(self, root, theme="light"):
         self.root = root
         self.root.title("ROM Librarian")
-        self.root.geometry("1200x900")
-        self.root.minsize(1000, 800)  # Minimum window size
+        self.root.geometry("1200x950")
+        self.root.minsize(1100, 900)  # Minimum window size
         self.current_theme = theme
 
         # Set application icon
@@ -388,7 +458,7 @@ class ROMManager:
         self.setup_menubar()
 
         # Top frame - Folder selection (shared across all tabs)
-        top_frame = ttk.Frame(self.root, padding="10")
+        top_frame = ttk.Frame(self.root, padding="5")
         top_frame.pack(fill=tk.X)
 
         ttk.Label(top_frame, text="ROM Folder:").pack(side=tk.LEFT, padx=(0, 5))
@@ -398,17 +468,18 @@ class ROMManager:
 
         # Create tabbed notebook
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
 
         # Create tabs
         self.setup_rename_tab()
+        self.setup_dat_rename_tab()
         self.setup_compression_tab()
         self.setup_m3u_tab()
         self.setup_duplicates_tab()
         self.setup_compare_tab()
 
         # Bottom status bar (shared across all tabs)
-        bottom_frame = ttk.Frame(self.root, padding="10")
+        bottom_frame = ttk.Frame(self.root, padding="5")
         bottom_frame.pack(fill=tk.X)
 
         self.status_var = tk.StringVar(value="Select a folder to begin")
@@ -541,7 +612,7 @@ class ROMManager:
 
     def setup_rename_tab(self):
         """Setup the rename tab"""
-        rename_tab = ttk.Frame(self.notebook, padding="10")
+        rename_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(rename_tab, text="Rename")
 
         # === GUIDANCE TEXT ===
@@ -642,12 +713,24 @@ class ROMManager:
         self.tree.column("original", width=400)
         self.tree.column("preview", width=400)
         self.tree.column("size", width=100)
+
+        # Configure selection colors (blue for user selection)
+        style = ttk.Style()
+        style.map('Treeview',
+                  background=[('selected', '#0078d7')],  # Blue background for selection
+                  foreground=[('selected', 'white')])     # White text for selection
+
         self.setup_custom_selection(self.tree)
 
         # Bottom frame - Action buttons
         button_frame = ttk.Frame(rename_tab)
         button_frame.pack(fill=tk.X)
 
+        # Left-aligned selection buttons
+        ttk.Button(button_frame, text="Select All", command=self.rename_select_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Deselect All", command=self.rename_deselect_all).pack(side=tk.LEFT)
+
+        # Right-aligned action buttons
         self.rename_button = ttk.Button(button_frame, text="Execute Rename",
                                        command=self.execute_rename, state="disabled")
         self.rename_button.pack(side=tk.RIGHT, padx=(5, 0))
@@ -662,9 +745,138 @@ class ROMManager:
 
         ttk.Button(button_frame, text="Refresh", command=self.reload_files).pack(side=tk.RIGHT)
 
+    def setup_dat_rename_tab(self):
+        """Setup the DAT rename tab for bulk renaming using DAT files"""
+        dat_tab = ttk.Frame(self.notebook, padding="5")
+        self.notebook.add(dat_tab, text="DAT Rename")
+
+        # === GUIDANCE TEXT ===
+        guidance_frame = ttk.Frame(dat_tab)
+        guidance_frame.pack(fill=tk.X, pady=(0, 10))
+        guidance_label = ttk.Label(guidance_frame,
+                                   text="Bulk rename ROMs based on No-Intro DAT files. ROMs are matched by hash and renamed automatically.",
+                                   font=("TkDefaultFont", 9, "italic"),
+                                   foreground="#666666")
+        guidance_label.pack(anchor=tk.W)
+
+        # === DAT FILE SELECTION ===
+        dat_frame = ttk.LabelFrame(dat_tab, text="DAT File", padding="10")
+        dat_frame.pack(fill=tk.X, pady=(0, 10))
+
+        dat_select_frame = ttk.Frame(dat_frame)
+        dat_select_frame.pack(fill=tk.X)
+
+        ttk.Label(dat_select_frame, text="Selected DAT:").pack(side=tk.LEFT, padx=(0, 5))
+        self.dat_file_var = tk.StringVar(value="No DAT file selected")
+        ttk.Entry(dat_select_frame, textvariable=self.dat_file_var, state="readonly", width=60).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(dat_select_frame, text="Browse DAT...", command=self.browse_dat_file).pack(side=tk.LEFT)
+
+        # === SCAN CONTROLS ===
+        scan_frame = ttk.LabelFrame(dat_tab, text="Scan & Match", padding="10")
+        scan_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Scan buttons
+        scan_button_frame = ttk.Frame(scan_frame)
+        scan_button_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.dat_start_scan_button = ttk.Button(scan_button_frame, text="Start Scan & Match", command=self.start_dat_scan)
+        self.dat_start_scan_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.dat_stop_scan_button = ttk.Button(scan_button_frame, text="Stop Scan", command=self.stop_dat_scan, state="disabled")
+        self.dat_stop_scan_button.pack(side=tk.LEFT)
+
+        # Status label (below buttons)
+        status_frame = ttk.Frame(scan_frame)
+        status_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.dat_scan_status_var = tk.StringVar(value="Select a folder and DAT file, then click 'Start Scan & Match'")
+        ttk.Label(status_frame, textvariable=self.dat_scan_status_var).pack(anchor=tk.W)
+
+        # Progress bar
+        progress_frame = ttk.Frame(scan_frame)
+        progress_frame.pack(fill=tk.X)
+
+        self.dat_progress_var = tk.IntVar(value=0)
+        self.dat_progress_bar = ttk.Progressbar(progress_frame, mode='determinate', variable=self.dat_progress_var)
+        self.dat_progress_bar.pack(fill=tk.X)
+
+        # === RESULTS TREE ===
+        results_frame = ttk.LabelFrame(dat_tab, text="Matched Files", padding="10")
+        results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Tree with scrollbar
+        tree_container = ttk.Frame(results_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+
+        tree_scroll = ttk.Scrollbar(tree_container)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.dat_results_tree = ttk.Treeview(tree_container,
+                                             columns=('current', 'new', 'status'),
+                                             show='headings',
+                                             yscrollcommand=tree_scroll.set)
+        tree_scroll.config(command=self.dat_results_tree.yview)
+
+        self.dat_results_tree.heading('current', text='Current Name')
+        self.dat_results_tree.heading('new', text='New Name (from DAT)')
+        self.dat_results_tree.heading('status', text='Status')
+
+        self.dat_results_tree.column('current', width=300)
+        self.dat_results_tree.column('new', width=300)
+        self.dat_results_tree.column('status', width=100)
+
+        self.dat_results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Configure tag colors for matches (darker grey for visibility)
+        # Dark mode friendly colors
+        self.dat_results_tree.tag_configure("match", background="#505050")  # Darker grey for matches
+        self.dat_results_tree.tag_configure("already_correct", background="#2d5016")  # Dark green
+        self.dat_results_tree.tag_configure("error", background="#5c1a1a")  # Dark red
+
+        # Configure selection colors (blue for user selection)
+        style = ttk.Style()
+        style.map('Treeview',
+                  background=[('selected', '#0078d7')],  # Blue background for selection
+                  foreground=[('selected', 'white')])     # White text for selection
+
+        # Setup custom selection behavior (click and drag)
+        self.setup_custom_selection(self.dat_results_tree)
+
+        # Summary label
+        self.dat_summary_var = tk.StringVar(value="")
+        ttk.Label(results_frame, textvariable=self.dat_summary_var, font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(5, 0))
+
+        # === ACTION BUTTONS ===
+        action_frame = ttk.Frame(dat_tab)
+        action_frame.pack(fill=tk.X)
+
+        # Left-aligned selection buttons
+        ttk.Button(action_frame, text="Select All", command=self.dat_select_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(action_frame, text="Deselect All", command=self.dat_deselect_all).pack(side=tk.LEFT)
+
+        # Right-aligned buttons (matching Rename tab layout)
+        self.dat_execute_button = ttk.Button(action_frame, text="Execute Rename", command=self.execute_dat_rename, state="disabled")
+        self.dat_execute_button.pack(side=tk.RIGHT, padx=(5, 0))
+
+        self.dat_rename_selected_button = ttk.Button(action_frame, text="Rename Selected", command=self.rename_selected_dat, state="disabled")
+        self.dat_rename_selected_button.pack(side=tk.RIGHT, padx=(5, 0))
+
+        self.dat_undo_button = ttk.Button(action_frame, text="Undo Last Rename", command=self.undo_dat_rename, state="disabled")
+        self.dat_undo_button.pack(side=tk.RIGHT, padx=(5, 0))
+
+        ttk.Button(action_frame, text="Clear Results", command=self.clear_dat_results).pack(side=tk.RIGHT)
+
+        # Initialize state variables
+        self.dat_file_path = None
+        self.dat_hash_map = {}
+        self.dat_scan_running = False
+        self.dat_scan_cancelled = False
+        self.dat_matched_files = []  # List of (current_path, new_name, status)
+        self.dat_undo_history = []  # List of (new_path, original_path) tuples
+
     def setup_compression_tab(self):
         """Setup the compression tab with dual-pane layout"""
-        compression_tab = ttk.Frame(self.notebook, padding="10")
+        compression_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(compression_tab, text="Compression")
 
         # === GUIDANCE TEXT ===
@@ -778,7 +990,7 @@ class ROMManager:
 
     def setup_m3u_tab(self):
         """Setup the M3U playlist creation tab"""
-        m3u_tab = ttk.Frame(self.notebook, padding="10")
+        m3u_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(m3u_tab, text="M3U Creation")
 
         # === GUIDANCE TEXT ===
@@ -1229,7 +1441,7 @@ class ROMManager:
 
     def setup_duplicates_tab(self):
         """Setup the duplicates detection tab"""
-        duplicates_tab = ttk.Frame(self.notebook, padding="10")
+        duplicates_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(duplicates_tab, text="Duplicates")
 
         # === GUIDANCE TEXT ===
@@ -1456,7 +1668,7 @@ class ROMManager:
 
     def setup_compare_tab(self):
         """Setup the compare collections tab"""
-        compare_tab = ttk.Frame(self.notebook, padding="10")
+        compare_tab = ttk.Frame(self.notebook, padding="5")
         self.notebook.add(compare_tab, text="Compare Collections")
 
         # === GUIDANCE TEXT ===
@@ -1702,19 +1914,20 @@ class ROMManager:
         _, ext = os.path.splitext(file_path)
         ext_lower = ext.lower()
 
-        # Check blacklist first
-        if ext_lower in FILE_EXTENSIONS_BLACKLIST:
-            return False
-
         # Check if file is in excluded folder
         path_parts = Path(file_path).parts
         for part in path_parts:
             if part.lower() in EXCLUDED_FOLDER_NAMES:
                 return False
 
-        # Check whitelist for ROM files
+        # Check whitelist for ROM files FIRST (before blacklist)
+        # This is important for extensions like .md (Mega Drive) that conflict with blacklist (Markdown)
         if ext_lower in ROM_EXTENSIONS_WHITELIST:
             return True
+
+        # Check blacklist after whitelist
+        if ext_lower in FILE_EXTENSIONS_BLACKLIST:
+            return False
 
         # If not in whitelist and not in blacklist, exclude it in ROM-only mode
         return False
@@ -1810,6 +2023,10 @@ class ROMManager:
 
             # Auto-detect file extensions in the folder
             self.auto_detect_extension()
+
+            # Update DAT rename status if DAT file is already loaded
+            if hasattr(self, 'dat_hash_map') and self.dat_hash_map:
+                self._update_dat_status_with_file_count()
 
     def load_files(self):
         """Load files from the selected folder"""
@@ -2111,14 +2328,25 @@ class ROMManager:
             if tags:
                 self.tree.item(item_id, tags=tuple(tags))
 
-        # Configure tag colors (theme-aware if ttkbootstrap available)
+        # Configure tag colors (dark mode friendly)
         if TTKBOOTSTRAP_AVAILABLE and hasattr(self.root, 'style'):
-            colors = self.root.style.colors
-            self.tree.tag_configure("changed", background=colors.info)
-            self.tree.tag_configure("collision", background=colors.danger, foreground="white")
+            # Check if using dark theme
+            theme = self.root.style.theme.name if hasattr(self.root.style, 'theme') else 'light'
+            if 'dark' in theme.lower():
+                self.tree.tag_configure("changed", background="#505050")  # Dark grey
+                self.tree.tag_configure("collision", background="#5c1a1a", foreground="white")  # Dark red
+            else:
+                colors = self.root.style.colors
+                self.tree.tag_configure("changed", background=colors.info)
+                self.tree.tag_configure("collision", background=colors.danger, foreground="white")
         else:
-            self.tree.tag_configure("changed", background="#e8f4f8")
-            self.tree.tag_configure("collision", background="#ffcccc")
+            # Check current theme setting
+            if hasattr(self, 'current_theme') and self.current_theme == 'dark':
+                self.tree.tag_configure("changed", background="#505050")  # Dark grey
+                self.tree.tag_configure("collision", background="#5c1a1a", foreground="white")  # Dark red
+            else:
+                self.tree.tag_configure("changed", background="#e8f4f8")  # Light blue
+                self.tree.tag_configure("collision", background="#ffcccc")  # Light red
 
         # Update status message
         status_msg = f"Preview: {changes_count} files will be renamed"
@@ -2250,12 +2478,23 @@ class ROMManager:
         thread.start()
 
     def execute_rename(self):
-        """Execute the rename operation"""
+        """Execute the rename operation - respects selection if items are selected"""
         pattern = self.pattern_var.get()
         replacement = self.replacement_var.get()
 
         if not pattern:
             return
+
+        # Check if user has selected specific items
+        selected = self.tree.selection()
+        selected_filenames = set()
+
+        if selected:
+            # Build set of selected filenames
+            for item in selected:
+                values = self.tree.item(item, "values")
+                original_filename = values[0]
+                selected_filenames.add(original_filename)
 
         # First, build rename plan and detect collisions
         rename_plan = []  # List of (old_path, new_path, original_filename, new_filename)
@@ -2266,6 +2505,9 @@ class ROMManager:
             existing_files_map[filename.lower()] = filename
 
         for filename, size, full_path in self.files_data:
+            # If selection exists, only process selected files
+            if selected and filename not in selected_filenames:
+                continue
             new_name = re.sub(pattern, replacement, filename)
             new_name = re.sub(r'\s+', ' ', new_name)
             new_name = re.sub(r'\s+\.', '.', new_name)
@@ -2316,9 +2558,20 @@ class ROMManager:
                         final_rename_plan.append((old_path, suffixed_path, old_name, suffixed_name))
 
         # Show confirmation with collision info
-        confirm_msg = f"Ready to rename {len(final_rename_plan)} files"
+        if selected:
+            confirm_msg = f"Ready to rename {len(final_rename_plan)} selected file"
+            if len(final_rename_plan) != 1:
+                confirm_msg += "s"
+        else:
+            confirm_msg = f"Ready to rename {len(final_rename_plan)} file"
+            if len(final_rename_plan) != 1:
+                confirm_msg += "s"
+
         if skipped_count > 0:
-            confirm_msg += f"\n{skipped_count} files will be skipped due to collisions"
+            confirm_msg += f"\n{skipped_count} file"
+            if skipped_count != 1:
+                confirm_msg += "s"
+            confirm_msg += " will be skipped due to collisions"
         confirm_msg += "\n\nProceed with rename?"
 
         response = ask_yesno(self.root, "Confirm Rename", confirm_msg)
@@ -4339,6 +4592,603 @@ class ROMManager:
         for item in tree.get_children():
             selection_dict[item] = False
             tree.set(item, "select", "☐")
+
+    # ==================== DAT RENAME TAB METHODS ====================
+
+    def browse_dat_file(self):
+        """Browse for a DAT file"""
+        file_path = filedialog.askopenfilename(
+            title="Select DAT File",
+            filetypes=[("DAT files", "*.dat"), ("XML files", "*.xml"), ("All files", "*.*")]
+        )
+
+        if file_path:
+            try:
+                # Parse the DAT file
+                self.dat_hash_map = parse_dat_file(file_path)
+                self.dat_file_path = file_path
+                self.dat_file_var.set(os.path.basename(file_path))
+
+                # Update status with file count if folder is selected
+                self._update_dat_status_with_file_count()
+            except Exception as e:
+                show_error(self.root, "DAT File Error", f"Failed to load DAT file:\n\n{str(e)}")
+                self.dat_file_path = None
+                self.dat_hash_map = {}
+                self.dat_file_var.set("No DAT file selected")
+
+    def _update_dat_status_with_file_count(self):
+        """Update the DAT rename status with ROM file count"""
+        if not self.current_folder or not os.path.exists(self.current_folder):
+            self.dat_scan_status_var.set(f"DAT file loaded: {len(self.dat_hash_map)} hash entries. Select a ROM folder to continue.")
+            return
+
+        # Quick count of ROM files
+        rom_count = 0
+        try:
+            for root_dir, dirs, files in os.walk(self.current_folder):
+                dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_FOLDER_NAMES]
+                for filename in files:
+                    file_path = os.path.join(root_dir, filename)
+                    if self.should_include_file(file_path, filter_mode="rom_only"):
+                        rom_count += 1
+
+            if rom_count > 0:
+                self.dat_scan_status_var.set(f"DAT loaded ({len(self.dat_hash_map)} entries). Found {rom_count} ROM file(s) in folder. Click 'Start Scan & Match'.")
+            else:
+                self.dat_scan_status_var.set(f"DAT loaded ({len(self.dat_hash_map)} entries). No ROM files found in folder.")
+        except Exception as e:
+            self.dat_scan_status_var.set(f"DAT file loaded: {len(self.dat_hash_map)} hash entries found")
+
+    def start_dat_scan(self):
+        """Start scanning and matching ROMs against the DAT file"""
+        # Validation
+        if not self.current_folder or not os.path.exists(self.current_folder):
+            show_warning(self.root, "No Folder Selected", "Please select a ROM folder first.")
+            return
+
+        if not self.dat_file_path or not self.dat_hash_map:
+            show_warning(self.root, "No DAT File", "Please select a DAT file first.")
+            return
+
+        # Clear previous results
+        for item in self.dat_results_tree.get_children():
+            self.dat_results_tree.delete(item)
+        self.dat_matched_files = []
+        self.dat_summary_var.set("")
+
+        # Update UI state
+        self.dat_scan_running = True
+        self.dat_scan_cancelled = False
+        self.dat_start_scan_button.config(state="disabled")
+        self.dat_stop_scan_button.config(state="normal")
+        self.dat_progress_var.set(0)
+        self.dat_scan_status_var.set("Starting scan...")
+
+        # Start background thread
+        thread = threading.Thread(target=self._dat_scan_worker, args=(self.current_folder,), daemon=True)
+        thread.start()
+
+    def stop_dat_scan(self):
+        """Stop the current DAT scan"""
+        self.dat_scan_cancelled = True
+        self.dat_scan_status_var.set("Cancelling scan...")
+        self.dat_stop_scan_button.config(state="disabled")
+
+    def _dat_scan_worker(self, scan_folder):
+        """Worker thread for scanning and matching files"""
+        try:
+            # Get all ROM files
+            rom_files = []
+            for root_dir, dirs, files in os.walk(scan_folder):
+                # Check for cancellation
+                if self.dat_scan_cancelled:
+                    self.root.after(0, self._dat_scan_cancelled)
+                    return
+
+                # Filter out excluded folders
+                dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_FOLDER_NAMES]
+
+                for filename in files:
+                    file_path = os.path.join(root_dir, filename)
+                    if self.should_include_file(file_path, filter_mode="rom_only"):
+                        rom_files.append(file_path)
+
+            total_files = len(rom_files)
+            if total_files == 0:
+                self.root.after(0, lambda: self.dat_scan_status_var.set("No ROM files found in folder"))
+                self.root.after(0, self._dat_scan_complete)
+                return
+
+            self.root.after(0, lambda: self.dat_progress_bar.config(maximum=total_files))
+
+            matched = 0
+            unmatched = 0
+            skipped = 0
+
+            # Process each file
+            for idx, file_path in enumerate(rom_files):
+                # Check for cancellation
+                if self.dat_scan_cancelled:
+                    self.root.after(0, self._dat_scan_cancelled)
+                    return
+
+                filename = os.path.basename(file_path)
+                self.root.after(0, lambda p=idx+1, f=filename: self.dat_scan_status_var.set(
+                    f"Scanning {p}/{total_files}: {f[:50]}..."))
+                self.root.after(0, lambda p=idx+1: self.dat_progress_var.set(p))
+
+                try:
+                    # Calculate hashes for the file
+                    crc32, md5, sha1 = calculate_file_hashes(file_path)
+
+                    # Try to match against DAT
+                    new_name = None
+                    if crc32 in self.dat_hash_map:
+                        new_name = self.dat_hash_map[crc32]
+                    elif md5 in self.dat_hash_map:
+                        new_name = self.dat_hash_map[md5]
+                    elif sha1 in self.dat_hash_map:
+                        new_name = self.dat_hash_map[sha1]
+
+                    if new_name:
+                        # Preserve file extension
+                        _, ext = os.path.splitext(filename)
+                        new_name_with_ext = new_name + ext
+
+                        # Check if already named correctly
+                        if filename == new_name_with_ext:
+                            status = "Already Correct"
+                            skipped += 1
+                        else:
+                            status = "Match Found"
+                            matched += 1
+
+                        # Store match
+                        self.dat_matched_files.append((file_path, new_name_with_ext, status))
+
+                        # Update UI with appropriate tag
+                        def insert_with_tag(fname, nname, stat):
+                            tag = "match" if stat == "Match Found" else "already_correct"
+                            item_id = self.dat_results_tree.insert('', 'end', values=(fname, nname, stat))
+                            self.dat_results_tree.item(item_id, tags=(tag,))
+
+                        self.root.after(0, lambda f=filename, n=new_name_with_ext, s=status: insert_with_tag(f, n, s))
+                    else:
+                        unmatched += 1
+
+                except Exception as e:
+                    # Error hashing file
+                    def insert_error(fname, err):
+                        item_id = self.dat_results_tree.insert('', 'end', values=(fname, "ERROR", f"Hash failed: {err}"))
+                        self.dat_results_tree.item(item_id, tags=("error",))
+
+                    self.root.after(0, lambda f=filename, e=str(e): insert_error(f, e))
+                    unmatched += 1
+
+            # Update summary
+            summary = f"Total: {total_files} | Matched: {matched} | Already Correct: {skipped} | Unmatched: {unmatched}"
+            self.root.after(0, lambda s=summary: self.dat_summary_var.set(s))
+
+            # Show unmatched files dialog if any
+            if unmatched > 0:
+                self.root.after(0, lambda u=unmatched: self._show_unmatched_dialog(u))
+
+            self.root.after(0, self._dat_scan_complete)
+
+        except Exception as e:
+            self.root.after(0, lambda: show_error(self.root, "Scan Error", f"An error occurred during scanning:\n\n{str(e)}"))
+            self.root.after(0, self._dat_scan_complete)
+
+    def _dat_scan_complete(self):
+        """Called when scan completes successfully"""
+        self.dat_scan_running = False
+        self.dat_scan_cancelled = False
+        self.dat_start_scan_button.config(state="normal")
+        self.dat_stop_scan_button.config(state="disabled")
+
+        # Enable rename buttons if we have matches
+        has_matches = any(status == "Match Found" for _, _, status in self.dat_matched_files)
+        if has_matches:
+            self.dat_execute_button.config(state="normal")
+            self.dat_rename_selected_button.config(state="normal")
+            self.dat_scan_status_var.set("Scan complete! Select files to rename or click 'Execute Rename' to rename all matches")
+        elif not self.dat_scan_status_var.get().startswith("No ROM"):
+            self.dat_scan_status_var.set("Scan complete! No files need renaming (all correct or unmatched)")
+
+    def _dat_scan_cancelled(self):
+        """Called when scan is cancelled"""
+        self.dat_scan_running = False
+        self.dat_scan_cancelled = False
+        self.dat_start_scan_button.config(state="normal")
+        self.dat_stop_scan_button.config(state="disabled")
+        self.dat_scan_status_var.set("Scan cancelled. Click 'Start Scan & Match' to try again")
+
+    def _show_unmatched_dialog(self, unmatched_count):
+        """Show dialog for unmatched files with export option"""
+        message = f"{unmatched_count} file(s) could not be matched to the DAT file.\n\nWould you like to export a list of unmatched files?"
+
+        result = ask_yesno(self.root, "Unmatched Files", message)
+
+        if result:
+            self._export_unmatched_files()
+
+    def _export_unmatched_files(self):
+        """Export unmatched files to a text file"""
+        if not self.current_folder:
+            return
+
+        # Get list of all scanned files
+        all_files = set()
+        for root_dir, dirs, files in os.walk(self.current_folder):
+            dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_FOLDER_NAMES]
+            for filename in files:
+                file_path = os.path.join(root_dir, filename)
+                if self.should_include_file(file_path, filter_mode="rom_only"):
+                    all_files.add(os.path.basename(filename))
+
+        # Get list of matched files
+        matched_files = set(os.path.basename(path) for path, _, status in self.dat_matched_files if status != "ERROR")
+
+        # Unmatched = all - matched
+        unmatched_files = sorted(all_files - matched_files)
+
+        if not unmatched_files:
+            show_info(self.root, "No Unmatched Files", "All files were matched!")
+            return
+
+        # Ask where to save
+        save_path = filedialog.asksaveasfilename(
+            title="Save Unmatched Files List",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile="unmatched_roms.txt"
+        )
+
+        if save_path:
+            try:
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Unmatched ROM Files - Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Total unmatched: {len(unmatched_files)}\n")
+                    f.write("=" * 80 + "\n\n")
+                    for filename in unmatched_files:
+                        f.write(filename + "\n")
+
+                show_info(self.root, "Export Complete", f"Unmatched files list saved to:\n{save_path}")
+            except Exception as e:
+                show_error(self.root, "Export Error", f"Failed to save list:\n\n{str(e)}")
+
+    def clear_dat_results(self):
+        """Clear the DAT rename results"""
+        for item in self.dat_results_tree.get_children():
+            self.dat_results_tree.delete(item)
+        self.dat_matched_files = []
+        self.dat_summary_var.set("")
+        self.dat_scan_status_var.set("Select a folder and DAT file, then click 'Start Scan & Match'")
+        self.dat_progress_var.set(0)
+
+        # Disable rename buttons
+        self.dat_execute_button.config(state="disabled")
+        self.dat_rename_selected_button.config(state="disabled")
+
+    def rename_selected_dat(self):
+        """Rename only the selected files from DAT matches"""
+        # Get selected items
+        selected = self.dat_results_tree.selection()
+        if not selected:
+            show_info(self.root, "Rename Selected", "No files selected")
+            return
+
+        # Build a set of selected current filenames
+        selected_filenames = set()
+        for item in selected:
+            values = self.dat_results_tree.item(item, "values")
+            current_filename = values[0]
+            selected_filenames.add(current_filename)
+
+        # Filter to only selected files with "Match Found" status
+        files_to_rename = []
+        for path, new_name, status in self.dat_matched_files:
+            current_filename = os.path.basename(path)
+            if current_filename in selected_filenames and status == "Match Found":
+                files_to_rename.append((path, new_name))
+
+        if not files_to_rename:
+            show_info(self.root, "Nothing to Rename", "No selected files need renaming (already correct or unmatched)")
+            return
+
+        # Perform rename with the filtered list
+        self._perform_dat_rename(files_to_rename, f"{len(files_to_rename)} selected file(s)")
+
+    def execute_dat_rename(self):
+        """Execute the DAT rename operation - respects selection if items are selected"""
+        # Check if user has selected specific items
+        selected = self.dat_results_tree.selection()
+
+        if selected:
+            # User has selected items - only rename those
+            selected_filenames = set()
+            for item in selected:
+                values = self.dat_results_tree.item(item, "values")
+                current_filename = values[0]
+                selected_filenames.add(current_filename)
+
+            # Filter to only selected files with "Match Found" status
+            files_to_rename = []
+            for path, new_name, status in self.dat_matched_files:
+                current_filename = os.path.basename(path)
+                if current_filename in selected_filenames and status == "Match Found":
+                    files_to_rename.append((path, new_name))
+
+            if not files_to_rename:
+                show_info(self.root, "Nothing to Rename", "No selected files need renaming (already correct or unmatched)")
+                return
+
+            # Perform rename with selection count
+            self._perform_dat_rename(files_to_rename, f"{len(files_to_rename)} selected file(s)")
+        else:
+            # No selection - rename all matched files
+            files_to_rename = [(path, new_name) for path, new_name, status in self.dat_matched_files
+                              if status == "Match Found"]
+
+            if not files_to_rename:
+                show_info(self.root, "Nothing to Rename", "All matched files are already correctly named!")
+                return
+
+            # Perform rename with total count
+            self._perform_dat_rename(files_to_rename, f"{len(files_to_rename)} file(s)")
+
+    def _perform_dat_rename(self, files_to_rename, description):
+        """Shared method to perform DAT rename with collision detection"""
+        # Build rename plan with collision detection
+        rename_plan = []
+        collision_paths = set()
+
+        for current_path, new_name in files_to_rename:
+            folder = os.path.dirname(current_path)
+            new_path = os.path.join(folder, new_name)
+
+            # Skip if target exists (and it's not the source)
+            if os.path.exists(new_path) and os.path.normpath(new_path) != os.path.normpath(current_path):
+                collision_paths.add(current_path)
+                continue
+
+            rename_plan.append((current_path, new_path))
+
+        # Remove duplicate targets
+        seen_targets = {}
+        filtered_plan = []
+        for old_path, new_path in rename_plan:
+            if new_path in seen_targets:
+                collision_paths.add(old_path)
+                collision_paths.add(seen_targets[new_path])
+            else:
+                seen_targets[new_path] = old_path
+                filtered_plan.append((old_path, new_path))
+
+        # Remove collisions from plan
+        final_plan = [(old, new) for old, new in filtered_plan if old not in collision_paths]
+
+        if not final_plan:
+            show_warning(self.root, "Nothing to Rename", "All files either have collisions or are already correctly named.")
+            return
+
+        # Show confirmation with collision info
+        confirm_msg = f"Ready to rename {description}.\n\n"
+        if collision_paths:
+            confirm_msg += f"WARNING: {len(collision_paths)} file(s) will be skipped due to collisions.\n\n"
+        confirm_msg += "Proceed with rename?"
+
+        result = ask_yesno(self.root, "Confirm Rename", confirm_msg)
+        if not result:
+            return
+
+        # Perform renames in a thread with progress dialog
+        progress = ProgressDialog(self.root, "Renaming Files", len(final_plan))
+
+        results = {
+            'success': 0,
+            'skipped': 0,
+            'errors': [],
+            'undo_history': []
+        }
+
+        def rename_worker():
+            try:
+                for idx, (old_path, new_path) in enumerate(final_plan):
+                    filename = os.path.basename(old_path)
+                    progress.update(idx + 1, filename)
+
+                    try:
+                        # Perform rename
+                        os.rename(old_path, new_path)
+                        results['success'] += 1
+                        results['undo_history'].append((new_path, old_path))
+
+                    except Exception as e:
+                        results['errors'].append((filename, str(e)))
+
+                progress.close()
+                self.root.after(0, lambda: self._show_dat_rename_results(results))
+
+            except Exception as e:
+                progress.close()
+                self.root.after(0, lambda: show_error(self.root, "Rename Error", f"An error occurred:\n\n{str(e)}"))
+
+        thread = threading.Thread(target=rename_worker, daemon=True)
+        thread.start()
+
+    def _show_dat_rename_results(self, results):
+        """Show results of DAT rename operation"""
+        success = results['success']
+        errors = results['errors']
+        undo_history = results['undo_history']
+
+        # Build message with better formatting
+        msg = f"Successfully renamed {success} file"
+        if success != 1:
+            msg += "s"
+
+        if errors:
+            msg += f"\n\nErrors: {len(errors)}"
+            msg += "\n\nFirst errors:\n"
+            for filename, error in errors[:10]:
+                msg += f"  • {filename}: {error}\n"
+            if len(errors) > 10:
+                msg += f"  ... and {len(errors) - 10} more"
+
+        show_info(self.root, "Rename Complete", msg)
+
+        # Store undo history and enable undo button
+        if undo_history:
+            self.dat_undo_history = undo_history
+            self.dat_undo_button.config(state="normal")
+
+        # Update the tree to reflect renamed files (update current names)
+        self._update_dat_tree_after_rename(undo_history)
+
+        # Keep results visible - don't clear
+        # User can manually rescan or clear if desired
+
+    def _update_dat_tree_after_rename(self, undo_history):
+        """Update the tree to show new current names after rename"""
+        if not undo_history:
+            return
+
+        # Build a map of old paths to new paths
+        rename_map = {}
+        for new_path, old_path in undo_history:
+            rename_map[old_path] = new_path
+
+        # Update tree items
+        for item in self.dat_results_tree.get_children():
+            values = self.dat_results_tree.item(item, "values")
+            if len(values) < 3:
+                continue
+
+            current_name = values[0]
+            new_name = values[1]
+            status = values[2]
+
+            # Find if this file was renamed
+            for old_path, new_path in rename_map.items():
+                old_filename = os.path.basename(old_path)
+                new_filename = os.path.basename(new_path)
+
+                if current_name == old_filename:
+                    # Update to show the new current name
+                    # Status changes from "Match Found" to "Already Correct" since it's now correctly named
+                    self.dat_results_tree.item(item, values=(new_filename, new_name, "Already Correct"))
+                    # Update tag to green
+                    self.dat_results_tree.item(item, tags=("already_correct",))
+                    break
+
+    def undo_dat_rename(self):
+        """Undo the last DAT rename operation"""
+        if not self.dat_undo_history:
+            show_warning(self.root, "Nothing to Undo", "No recent DAT rename operation to undo.")
+            return
+
+        result = ask_yesno(self.root, "Confirm Undo",
+                          f"This will undo the last rename operation ({len(self.dat_undo_history)} files).\n\nContinue?")
+
+        if not result:
+            return
+
+        # Perform undo
+        success = 0
+        errors = []
+
+        for new_path, original_path in self.dat_undo_history:
+            try:
+                # Check if current file still exists
+                if not os.path.exists(new_path):
+                    errors.append((os.path.basename(original_path), "File no longer exists at new location"))
+                    continue
+
+                # Check if original path is now occupied
+                if os.path.exists(original_path):
+                    errors.append((os.path.basename(original_path), "Original location is now occupied"))
+                    continue
+
+                # Perform undo
+                os.rename(new_path, original_path)
+                success += 1
+
+            except Exception as e:
+                errors.append((os.path.basename(original_path), str(e)))
+
+        # Show results
+        msg = f"Undo operation complete!\n\n"
+        msg += f"Successfully restored: {success} file(s)\n"
+
+        if errors:
+            msg += f"Errors: {len(errors)}\n\n"
+            msg += "First errors:\n"
+            for filename, error in errors[:10]:
+                msg += f"  • {filename}: {error}\n"
+            if len(errors) > 10:
+                msg += f"  ... and {len(errors) - 10} more\n"
+
+        show_info(self.root, "Undo Complete", msg)
+
+        # Update the tree to reflect undone renames (revert current names)
+        self._update_dat_tree_after_undo(self.dat_undo_history)
+
+        # Clear undo history and disable button
+        self.dat_undo_history = []
+        self.dat_undo_button.config(state="disabled")
+
+    def _update_dat_tree_after_undo(self, undo_history):
+        """Update the tree to show original names after undo"""
+        if not undo_history:
+            return
+
+        # Build a map of new paths to original paths
+        undo_map = {}
+        for new_path, original_path in undo_history:
+            undo_map[new_path] = original_path
+
+        # Update tree items
+        for item in self.dat_results_tree.get_children():
+            values = self.dat_results_tree.item(item, "values")
+            if len(values) < 3:
+                continue
+
+            current_name = values[0]
+            new_name = values[1]
+            status = values[2]
+
+            # Find if this file was undone
+            for new_path, original_path in undo_map.items():
+                new_filename = os.path.basename(new_path)
+                original_filename = os.path.basename(original_path)
+
+                if current_name == new_filename:
+                    # Update to show the original current name
+                    # Status changes from "Already Correct" back to "Match Found"
+                    self.dat_results_tree.item(item, values=(original_filename, new_name, "Match Found"))
+                    # Update tag back to grey
+                    self.dat_results_tree.item(item, tags=("match",))
+                    break
+
+    def dat_select_all(self):
+        """Select all items in DAT results tree"""
+        for item in self.dat_results_tree.get_children():
+            self.dat_results_tree.selection_add(item)
+
+    def dat_deselect_all(self):
+        """Deselect all items in DAT results tree"""
+        self.dat_results_tree.selection_remove(self.dat_results_tree.selection())
+
+    def rename_select_all(self):
+        """Select all items in rename tree"""
+        for item in self.tree.get_children():
+            self.tree.selection_add(item)
+
+    def rename_deselect_all(self):
+        """Deselect all items in rename tree"""
+        self.tree.selection_remove(self.tree.selection())
 
 
 def main():
