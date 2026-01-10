@@ -31,7 +31,7 @@ except ImportError:
     TTKBOOTSTRAP_AVAILABLE = False
 
 # App version
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 # Config file for storing user preferences
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
@@ -400,6 +400,59 @@ def parse_dat_file(dat_path):
 
     except Exception as e:
         raise Exception(f"Failed to parse DAT file: {str(e)}")
+
+
+def update_gamelist_xml(folder_path, rename_map):
+    """
+    Update gamelist.xml file with renamed paths.
+    rename_map is a dict of {old_path: new_path}
+    Only updates <path> tags, leaves everything else (images, metadata) unchanged.
+    """
+    gamelist_path = os.path.join(folder_path, "gamelist.xml")
+
+    if not os.path.exists(gamelist_path):
+        return 0  # No gamelist.xml found, nothing to update
+
+    try:
+        # Parse the XML file
+        tree = ET.parse(gamelist_path)
+        root = tree.getroot()
+
+        updates_made = 0
+
+        # Find all <game> elements
+        for game in root.findall('game'):
+            path_element = game.find('path')
+            if path_element is not None and path_element.text:
+                current_path = path_element.text
+
+                # Check if this path needs updating
+                # Path in XML is relative like "./filename.zip"
+                # We need to match just the filename part
+                for old_path, new_path in rename_map.items():
+                    old_filename = os.path.basename(old_path)
+                    new_filename = os.path.basename(new_path)
+
+                    # Check if the XML path ends with the old filename
+                    if current_path.endswith(old_filename):
+                        # Replace just the filename part, keeping the ./ prefix
+                        new_xml_path = current_path.replace(old_filename, new_filename)
+                        path_element.text = new_xml_path
+                        updates_made += 1
+                        break
+
+        if updates_made > 0:
+            # Backup the original file
+            backup_path = gamelist_path + ".backup"
+            shutil.copy2(gamelist_path, backup_path)
+
+            # Write the updated XML
+            tree.write(gamelist_path, encoding='utf-8', xml_declaration=True)
+
+        return updates_made
+
+    except Exception as e:
+        raise Exception(f"Failed to update gamelist.xml: {str(e)}")
 
 
 def calculate_file_hashes(file_path):
@@ -839,6 +892,13 @@ class ROMManager:
             ttk.Radiobutton(collision_frame, text=text, variable=self.collision_strategy,
                           value=value).pack(side=tk.LEFT, padx=5)
 
+        # Gamelist.xml auto-update option
+        gamelist_frame = ttk.Frame(rename_frame)
+        gamelist_frame.pack(fill=tk.X, pady=(5, 5))
+        self.update_gamelist_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(gamelist_frame, text="Auto-Update gamelist.xml (EmulationStation/RetroPie)",
+                       variable=self.update_gamelist_var).pack(side=tk.LEFT)
+
         # Preset patterns
         preset_frame = ttk.Frame(rename_frame)
         preset_frame.pack(fill=tk.X, pady=(5, 0))
@@ -978,6 +1038,13 @@ class ROMManager:
         self.dat_progress_var = tk.IntVar(value=0)
         self.dat_progress_bar = ttk.Progressbar(progress_frame, mode='determinate', variable=self.dat_progress_var)
         self.dat_progress_bar.pack(fill=tk.X)
+
+        # Gamelist.xml auto-update option
+        dat_gamelist_frame = ttk.Frame(scan_frame)
+        dat_gamelist_frame.pack(fill=tk.X, pady=(10, 0))
+        self.dat_update_gamelist_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(dat_gamelist_frame, text="Auto-Update gamelist.xml (EmulationStation/RetroPie)",
+                       variable=self.dat_update_gamelist_var).pack(side=tk.LEFT)
 
         # === RESULTS TREE ===
         results_frame = ttk.LabelFrame(dat_tab, text="Matched Files", padding="10")
@@ -2891,8 +2958,17 @@ class ROMManager:
         # Update undo history
         self.undo_history = results['undo_history']
 
+        # Update gamelist.xml if checkbox is enabled
+        gamelist_updates = self._update_gamelist_if_enabled(
+            self.update_gamelist_var,
+            results['undo_history'],
+            results['success_count']
+        )
+
         # Show results
         result_msg = f"Successfully renamed {results['success_count']} files"
+        if gamelist_updates > 0:
+            result_msg += f"\nUpdated {gamelist_updates} path(s) in gamelist.xml"
         if results['skipped_count'] > 0:
             result_msg += f"\n{results['skipped_count']} files skipped (collisions)"
         if results['error_count'] > 0:
@@ -2912,6 +2988,43 @@ class ROMManager:
         self.load_files()
         self.rename_button.config(state="disabled")
         self.rename_selected_button.config(state="disabled")
+
+    def _update_gamelist_if_enabled(self, checkbox_var, undo_history, success_count):
+        """
+        Helper to update gamelist.xml if checkbox is enabled.
+        Returns number of paths updated.
+        """
+        if not checkbox_var.get() or success_count == 0:
+            return 0
+
+        try:
+            # Create rename map from undo history: {old_path: new_path}
+            rename_map = {old_path: new_path for new_path, old_path in undo_history}
+            return update_gamelist_xml(self.current_folder, rename_map)
+        except Exception:
+            # Don't fail the whole operation if gamelist update fails
+            return 0
+
+    def _restore_gamelist_backup(self):
+        """
+        Helper to restore gamelist.xml from backup.
+        Returns True if backup was restored, False otherwise.
+        """
+        if not self.current_folder:
+            return False
+
+        gamelist_path = os.path.join(self.current_folder, "gamelist.xml")
+        backup_path = gamelist_path + ".backup"
+
+        if not os.path.exists(backup_path):
+            return False
+
+        try:
+            shutil.copy2(backup_path, gamelist_path)
+            os.remove(backup_path)
+            return True
+        except Exception:
+            return False
 
     def undo_rename(self):
         """Undo the last rename operation"""
@@ -2951,8 +3064,13 @@ class ROMManager:
                 errors.append(f"{os.path.basename(current_path)}: {str(e)}")
                 error_count += 1
 
+        # Restore gamelist.xml from backup if it exists
+        gamelist_restored = self._restore_gamelist_backup()
+
         # Show results
         result_msg = f"Successfully reverted {success_count} files"
+        if gamelist_restored:
+            result_msg += "\nRestored gamelist.xml from backup"
         if error_count > 0:
             result_msg += f"\n{error_count} errors occurred"
             if errors:
@@ -5228,10 +5346,20 @@ class ROMManager:
         errors = results['errors']
         undo_history = results['undo_history']
 
+        # Update gamelist.xml if checkbox is enabled
+        gamelist_updates = self._update_gamelist_if_enabled(
+            self.dat_update_gamelist_var,
+            undo_history,
+            success
+        )
+
         # Build message with better formatting
         msg = f"Successfully renamed {success} file"
         if success != 1:
             msg += "s"
+
+        if gamelist_updates > 0:
+            msg += f"\nUpdated {gamelist_updates} path(s) in gamelist.xml"
 
         if errors:
             msg += f"\n\nErrors: {len(errors)}"
@@ -5322,9 +5450,14 @@ class ROMManager:
             except Exception as e:
                 errors.append((os.path.basename(original_path), str(e)))
 
+        # Restore gamelist.xml from backup if it exists
+        gamelist_restored = self._restore_gamelist_backup()
+
         # Show results
         msg = f"Undo operation complete!\n\n"
         msg += f"Successfully restored: {success} file(s)\n"
+        if gamelist_restored:
+            msg += "Restored gamelist.xml from backup\n"
 
         if errors:
             msg += f"Errors: {len(errors)}\n\n"

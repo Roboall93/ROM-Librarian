@@ -16,7 +16,23 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
   - Remove GoodTools dump tags
   - Convert underscores to spaces
 - **Collision detection** with multiple handling strategies
-- **Undo support** for the last rename operation
+- **Select All/Deselect All** buttons for batch operations
+- **Auto-update gamelist.xml** - Automatically updates EmulationStation/RetroPie metadata when renaming files
+- **Undo support** for the last rename operation (includes gamelist.xml restoration)
+
+### DAT Rename Tab
+- **No-Intro DAT file support** for accurate ROM naming
+- **Multi-hash matching** - Uses CRC32, MD5, and SHA1 for precise identification
+- **ZIP file support** - Hashes ROM files inside zip archives for matching
+- **Live preview** - See matched files before renaming
+- **Smart filtering** - Skip files already correctly named
+- **Sortable columns** - Click column headers to sort results
+- **Selection tools** - Select All/Deselect All with click-and-drag support
+- **Unmatched file tracking** - Shows files that couldn't be matched (for manual review)
+- **Export functionality** - Export list of unmatched files
+- **Auto-update gamelist.xml** - Maintains EmulationStation/RetroPie metadata
+- **Refresh button** - Rescan after operations in other tabs
+- **Full undo support** with tree updates and gamelist.xml restoration
 
 ### Compression Tab
 - **Dual-pane interface** showing uncompressed ROMs and ZIP archives
@@ -47,6 +63,13 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 - **Integrity verification** for matching files
 - **Copy missing files** between collections
 - **Export missing file lists**
+
+### Updates Menu
+- **Auto-updater** - Automatically check for new releases from GitHub
+- **Check on Startup** toggle (enabled by default)
+- **Manual update check** - "Check for Updates" option
+- **Release notes preview** - See what's new before updating
+- **Direct download links** - Opens GitHub release page for easy downloads
 
 ## Installation
 
