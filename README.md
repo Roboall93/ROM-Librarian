@@ -8,7 +8,7 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 
 ## Features
 
-### Rename Tab
+### Rename Collections
 - **Regex-based batch renaming** with live preview
 - **Preset patterns** for common cleanup tasks:
   - Remove region tags (USA, Europe, Japan)
@@ -20,7 +20,7 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 - **Auto-update gamelist.xml** - Automatically updates EmulationStation/RetroPie metadata when renaming files
 - **Undo support** for the last rename operation (includes gamelist.xml restoration)
 
-### DAT Rename Tab
+### DAT Renaming
 - **No-Intro DAT file support** for accurate ROM naming
 - **Multi-hash matching** - Uses CRC32, MD5, and SHA1 for precise identification
 - **ZIP file support** - Hashes ROM files inside zip archives for matching
@@ -34,20 +34,20 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 - **Refresh button** - Rescan after operations in other tabs
 - **Full undo support** with tree updates and gamelist.xml restoration
 
-### Compression Tab
+### Bulk Compression
 - **Dual-pane interface** showing uncompressed ROMs and ZIP archives
 - **Batch compress** ROMs to ZIP format
 - **Batch extract** ZIP archives
 - **Auto-detection** of ROM file types in folder
 - **Safe cleanup** - delete only files that have been archived
 
-### M3U Creation Tab
+### Automatic M3U Creation
 - **Multi-disc game detection** (Disc 1, Disc 2, CD1, etc.)
 - **Automatic M3U playlist generation** for emulators
 - **Organized storage** - moves disc files to `.hidden` folder
 - Keeps your game list clean with one entry per multi-disc game
 
-### Duplicates Tab
+### Duplicates Detection
 - **Content-based duplicate detection** using SHA1/MD5 hashing
 - **Persistent hash caching** - re-scans are lightning fast when files haven't changed
 - **Multiple scan modes**: single folder, with subfolders, or entire ROM library
@@ -57,7 +57,7 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
   - Keep oldest/newest file
 - **Export duplicate reports** to text file
 
-### Compare Collections Tab
+### Compare Collections
 - **Compare two ROM collections** to find differences
 - **Quick compare** (by filename) or **Deep compare** (by content hash)
 - **Integrity verification** for matching files
@@ -67,10 +67,7 @@ A desktop application for managing, organizing, and maintaining retro gaming ROM
 ### Updates Menu
 - **Auto-updater** - Automatically check for new releases from GitHub
 - **Check on Startup** toggle (enabled by default)
-- **Manual update check** - "Check for Updates" option
-- **Release notes preview** - See what's new before updating
-- **Direct download links** - Opens GitHub release page for easy downloads
-
+- 
 ## Installation
 
 ### For End Users (Recommended)
