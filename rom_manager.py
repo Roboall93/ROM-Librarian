@@ -31,7 +31,7 @@ except ImportError:
     TTKBOOTSTRAP_AVAILABLE = False
 
 # App version
-VERSION = "1.0.1"
+VERSION = "1.1.1"
 
 # Config file for storing user preferences
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
@@ -405,21 +405,54 @@ def parse_dat_file(dat_path):
 def calculate_file_hashes(file_path):
     """
     Calculate CRC32, MD5, and SHA1 hashes for a file.
+    For zip files, hashes the first ROM file found inside.
     Returns: (crc32_hex, md5_hex, sha1_hex)
     """
+    import zipfile
+
     crc32_hash = 0
     md5_hash = hashlib.md5()
     sha1_hash = hashlib.sha1()
 
     try:
-        with open(file_path, 'rb') as f:
-            while True:
-                chunk = f.read(1024 * 1024)  # Read 1MB at a time
-                if not chunk:
-                    break
-                crc32_hash = zlib.crc32(chunk, crc32_hash)
-                md5_hash.update(chunk)
-                sha1_hash.update(chunk)
+        # Check if this is a zip file
+        if file_path.lower().endswith('.zip') and zipfile.is_zipfile(file_path):
+            with zipfile.ZipFile(file_path, 'r') as zipf:
+                # Get list of files in the zip
+                file_list = zipf.namelist()
+
+                # Find the first ROM file (skip directories and non-ROM files)
+                rom_file = None
+                for fname in file_list:
+                    if not fname.endswith('/'):  # Skip directories
+                        # Check if it has a ROM extension
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext in ROM_EXTENSIONS_WHITELIST:
+                            rom_file = fname
+                            break
+
+                if not rom_file:
+                    raise Exception(f"No ROM file found in zip: {file_path}")
+
+                # Hash the ROM file contents
+                with zipf.open(rom_file) as f:
+                    while True:
+                        chunk = f.read(1024 * 1024)  # Read 1MB at a time
+                        if not chunk:
+                            break
+                        crc32_hash = zlib.crc32(chunk, crc32_hash)
+                        md5_hash.update(chunk)
+                        sha1_hash.update(chunk)
+        else:
+            # Regular file - hash directly
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(1024 * 1024)  # Read 1MB at a time
+                    if not chunk:
+                        break
+                    crc32_hash = zlib.crc32(chunk, crc32_hash)
+                    md5_hash.update(chunk)
+                    sha1_hash.update(chunk)
 
         # Format CRC32 as 8-character hex string
         crc32_hex = format(crc32_hash & 0xFFFFFFFF, '08x')
@@ -443,6 +476,9 @@ class ROMManager:
         # Set application icon
         self._set_app_icon()
 
+        # Load config
+        self.config = load_config()
+
         self.current_folder = None
         self.files_data = []  # List of (filename, size, full_path)
         self.undo_history = []  # List of (old_path, new_path) tuples from last rename
@@ -451,6 +487,10 @@ class ROMManager:
         self.last_filtered_count = 0  # Track filtered files count for display
 
         self.setup_ui()
+
+        # Check for updates on startup if enabled (after UI is ready)
+        if self.config.get("check_updates_on_startup", True):
+            self.root.after(1000, lambda: self.check_for_updates(manual=False))
 
     def setup_ui(self):
         """Create the main UI layout"""
@@ -510,6 +550,17 @@ class ROMManager:
         about_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label="About ROM Librarian", command=self.show_about)
+
+        # Updates menu
+        updates_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Updates", menu=updates_menu)
+        updates_menu.add_command(label="Check for Updates", command=self.check_for_updates_manual)
+
+        # Check on Startup toggle
+        self.check_updates_on_startup_var = tk.BooleanVar(value=self.config.get("check_updates_on_startup", True))
+        updates_menu.add_checkbutton(label="Check on Startup",
+                                     variable=self.check_updates_on_startup_var,
+                                     command=self.toggle_check_on_startup)
 
     def show_about(self):
         """Show the About dialog with attributions"""
@@ -583,6 +634,134 @@ class ROMManager:
         y = parent_y + (parent_height // 2) - (height // 2)
         about_dialog.geometry(f"+{x}+{y}")
         about_dialog.grab_set()
+
+    def check_for_updates_manual(self):
+        """Check for updates manually (from menu)"""
+        self.check_for_updates(manual=True)
+
+    def toggle_check_on_startup(self):
+        """Toggle the check for updates on startup setting"""
+        enabled = self.check_updates_on_startup_var.get()
+        self.config["check_updates_on_startup"] = enabled
+        save_config(self.config)
+
+    def check_for_updates(self, manual=False):
+        """Check for updates from GitHub releases"""
+        import urllib.request
+        import json
+
+        def check_updates_worker():
+            try:
+                url = "https://api.github.com/repos/Roboall93/ROM-Librarian/releases/latest"
+                req = urllib.request.Request(url)
+                req.add_header('User-Agent', 'ROM-Librarian')
+
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode())
+                    latest_version = data.get("tag_name", "").lstrip("v")
+                    release_url = data.get("html_url", "")
+                    release_notes = data.get("body", "")
+
+                    # Compare versions
+                    if self.is_newer_version(latest_version, VERSION):
+                        self.root.after(0, lambda: self.show_update_dialog(latest_version, release_url, release_notes))
+                    elif manual:
+                        self.root.after(0, lambda: show_info(self.root, "No Updates",
+                                                             f"You're running the latest version ({VERSION})!"))
+            except Exception as e:
+                if manual:
+                    self.root.after(0, lambda: show_error(self.root, "Update Check Failed",
+                                                          f"Could not check for updates:\n\n{str(e)}"))
+
+        # Run in background thread
+        thread = threading.Thread(target=check_updates_worker, daemon=True)
+        thread.start()
+
+    def is_newer_version(self, latest, current):
+        """Compare version strings (e.g., '1.2.0' vs '1.1.0')"""
+        try:
+            latest_parts = [int(x) for x in latest.split('.')]
+            current_parts = [int(x) for x in current.split('.')]
+
+            # Pad to same length
+            while len(latest_parts) < len(current_parts):
+                latest_parts.append(0)
+            while len(current_parts) < len(latest_parts):
+                current_parts.append(0)
+
+            return latest_parts > current_parts
+        except:
+            return False
+
+    def show_update_dialog(self, version, url, notes):
+        """Show dialog when update is available"""
+        import webbrowser
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Update Available")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        set_window_icon(dialog)
+
+        container = tk.Frame(dialog, padx=30, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        # Title
+        title_label = tk.Label(container, text="Update Available!",
+                               font=("TkDefaultFont", 14, "bold"))
+        title_label.pack(pady=(0, 10))
+
+        # Version info
+        info_text = f"A new version of ROM Librarian is available!\n\n"
+        info_text += f"Current version: {VERSION}\n"
+        info_text += f"Latest version: {version}\n"
+
+        info_label = tk.Label(container, text=info_text, justify=tk.LEFT)
+        info_label.pack(pady=(0, 10))
+
+        # Release notes (first 3 lines)
+        if notes:
+            notes_lines = notes.split('\n')[:3]
+            notes_preview = '\n'.join(notes_lines)
+            if len(notes.split('\n')) > 3:
+                notes_preview += "\n..."
+
+            notes_frame = tk.Frame(container, relief=tk.SUNKEN, borderwidth=1)
+            notes_frame.pack(fill=tk.X, pady=(0, 15))
+
+            notes_label = tk.Label(notes_frame, text=notes_preview,
+                                   font=("TkDefaultFont", 9),
+                                   justify=tk.LEFT, anchor=tk.W,
+                                   padx=10, pady=10)
+            notes_label.pack(fill=tk.X)
+
+        # Buttons
+        button_frame = tk.Frame(container)
+        button_frame.pack()
+
+        download_btn = tk.Button(button_frame, text="Download Update",
+                                 command=lambda: [webbrowser.open(url), dialog.destroy()],
+                                 width=15)
+        download_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        later_btn = tk.Button(button_frame, text="Later",
+                              command=dialog.destroy, width=10)
+        later_btn.pack(side=tk.LEFT)
+
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+
+        # Center the dialog
+        dialog.update_idletasks()
+        width = dialog.winfo_reqwidth()
+        height = dialog.winfo_reqheight()
+        parent_x = self.root.winfo_x()
+        parent_y = self.root.winfo_y()
+        parent_width = self.root.winfo_width()
+        parent_height = self.root.winfo_height()
+        x = parent_x + (parent_width // 2) - (width // 2)
+        y = parent_y + (parent_height // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
 
     def change_theme(self, theme):
         """Change the application theme"""
@@ -817,9 +996,12 @@ class ROMManager:
                                              yscrollcommand=tree_scroll.set)
         tree_scroll.config(command=self.dat_results_tree.yview)
 
-        self.dat_results_tree.heading('current', text='Current Name')
-        self.dat_results_tree.heading('new', text='New Name (from DAT)')
-        self.dat_results_tree.heading('status', text='Status')
+        self.dat_results_tree.heading('current', text='Current Name',
+                                      command=lambda: self.sort_treeview(self.dat_results_tree, "current", False))
+        self.dat_results_tree.heading('new', text='New Name (from DAT)',
+                                      command=lambda: self.sort_treeview(self.dat_results_tree, "new", False))
+        self.dat_results_tree.heading('status', text='Status',
+                                      command=lambda: self.sort_treeview(self.dat_results_tree, "status", False))
 
         self.dat_results_tree.column('current', width=300)
         self.dat_results_tree.column('new', width=300)
@@ -831,6 +1013,7 @@ class ROMManager:
         # Dark mode friendly colors
         self.dat_results_tree.tag_configure("match", background="#505050")  # Darker grey for matches
         self.dat_results_tree.tag_configure("already_correct", background="#2d5016")  # Dark green
+        self.dat_results_tree.tag_configure("unmatched", background="#3d3d00")  # Dark yellow/brown
         self.dat_results_tree.tag_configure("error", background="#5c1a1a")  # Dark red
 
         # Configure selection colors (blue for user selection)
@@ -852,7 +1035,8 @@ class ROMManager:
 
         # Left-aligned selection buttons
         ttk.Button(action_frame, text="Select All", command=self.dat_select_all).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(action_frame, text="Deselect All", command=self.dat_deselect_all).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="Deselect All", command=self.dat_deselect_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(action_frame, text="Refresh", command=self.dat_refresh_scan).pack(side=tk.LEFT)
 
         # Right-aligned buttons (matching Rename tab layout)
         self.dat_execute_button = ttk.Button(action_frame, text="Execute Rename", command=self.execute_dat_rename, state="disabled")
@@ -1925,6 +2109,10 @@ class ROMManager:
         if ext_lower in ROM_EXTENSIONS_WHITELIST:
             return True
 
+        # Also include .zip files in ROM-only mode (for DAT Rename and other features)
+        if ext_lower == '.zip':
+            return True
+
         # Check blacklist after whitelist
         if ext_lower in FILE_EXTENSIONS_BLACKLIST:
             return False
@@ -2202,7 +2390,12 @@ class ROMManager:
             "original": "Original Filename",
             "preview": "Preview (after rename)",
             "date": "Date Modified",
-            "select": "☐"
+            "select": "☐",
+            "current": "Current Name",
+            "new": "New Name (from DAT)",
+            "game_name": "Game Name",
+            "disc_count": "Discs",
+            "location": "Location"
         }
 
         # Clear arrows from all columns and add arrow to sorted column
@@ -2820,7 +3013,12 @@ class ROMManager:
                 else:
                     self.status_var.set(f"Auto-detected: {most_common_count} {most_common_ext.upper()} files")
             else:
-                self.status_var.set(f"Loaded {len(self.files_data)} files - no ROM extensions detected")
+                # Check if we have zip files
+                zip_count = sum(1 for _, _, path in self.files_data if path.lower().endswith('.zip'))
+                if zip_count > 0:
+                    self.status_var.set(f"Loaded {len(self.files_data)} files ({zip_count} zipped)")
+                else:
+                    self.status_var.set(f"Loaded {len(self.files_data)} files")
 
         except Exception as e:
             # Silently fail auto-detection
@@ -4755,7 +4953,13 @@ class ROMManager:
 
                         self.root.after(0, lambda f=filename, n=new_name_with_ext, s=status: insert_with_tag(f, n, s))
                     else:
+                        # No match found - display as unmatched
                         unmatched += 1
+                        def insert_unmatched(fname):
+                            item_id = self.dat_results_tree.insert('', 'end', values=(fname, "-", "No Match"))
+                            self.dat_results_tree.item(item_id, tags=("unmatched",))
+
+                        self.root.after(0, lambda f=filename: insert_unmatched(f))
 
                 except Exception as e:
                     # Error hashing file
@@ -5180,6 +5384,20 @@ class ROMManager:
     def dat_deselect_all(self):
         """Deselect all items in DAT results tree"""
         self.dat_results_tree.selection_remove(self.dat_results_tree.selection())
+
+    def dat_refresh_scan(self):
+        """Refresh the DAT scan with current folder and DAT file"""
+        # Check if we have both folder and DAT file selected
+        if not self.current_folder:
+            show_warning(self.root, "No Folder", "Please select a ROM folder first.")
+            return
+
+        if not hasattr(self, 'dat_file_path') or not self.dat_file_path:
+            show_warning(self.root, "No DAT File", "Please select a DAT file first.")
+            return
+
+        # Re-run the scan
+        self.start_dat_scan()
 
     def rename_select_all(self):
         """Select all items in rename tree"""
