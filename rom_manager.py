@@ -30,8 +30,11 @@ try:
     import ttkbootstrap as ttk_boot
     from ttkbootstrap.constants import *
     TTKBOOTSTRAP_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception) as e:
+    # Catch ImportError and any TclError from msgcat issues during import
     TTKBOOTSTRAP_AVAILABLE = False
+    if "msgcat" in str(e):
+        print(f"Warning: ttkbootstrap disabled due to msgcat error. Using default theme.")
 
 # App version
 VERSION = "1.1.3"
