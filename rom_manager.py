@@ -24,6 +24,8 @@ import zlib
 
 # Try to import ttkbootstrap for theming
 try:
+    # Disable ttkbootstrap localization to avoid msgcat issues on some Linux systems
+    os.environ['TTKBOOTSTRAP_DISABLE_LOCALIZATION'] = '1'
     import ttkbootstrap as ttk_boot
     from ttkbootstrap.constants import *
     TTKBOOTSTRAP_AVAILABLE = True
@@ -5572,15 +5574,18 @@ def main():
 
     # Create window with ttkbootstrap if available
     if TTKBOOTSTRAP_AVAILABLE:
-        root = ttk_boot.Window(themename=theme_map.get(theme, "litera"))
-
         # Workaround for PyInstaller + ttkbootstrap localization issues on Linux
-        # Stub out msgcat if it's not available (known issue on CachyOS, Steam Deck, etc.)
+        # Try to create ttkbootstrap Window, but fall back to plain Tk if msgcat fails
         try:
-            root.tk.eval('::msgcat::mcset en test test')
-        except tk.TclError:
-            # msgcat not available, create stub
-            root.tk.eval('proc ::msgcat::mcset {args} {}')
+            root = ttk_boot.Window(themename=theme_map.get(theme, "litera"))
+        except tk.TclError as e:
+            if "msgcat" in str(e):
+                # msgcat not available (known issue on CachyOS, Steam Deck, etc.)
+                # Fall back to plain Tk - themes won't work but app will run
+                print(f"Warning: ttkbootstrap themes unavailable due to msgcat error. Using default theme.")
+                root = tk.Tk()
+            else:
+                raise
     else:
         root = tk.Tk()
 
