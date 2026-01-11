@@ -31,7 +31,7 @@ except ImportError:
     TTKBOOTSTRAP_AVAILABLE = False
 
 # App version
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
 # Config file for storing user preferences
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
