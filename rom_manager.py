@@ -756,49 +756,66 @@ class ROMManager:
         dialog.transient(self.root)
         set_window_icon(dialog)
 
-        container = tk.Frame(dialog, padx=30, pady=20)
+        container = ttk.Frame(dialog, padding=30)
         container.pack(fill=tk.BOTH, expand=True)
 
         # Title
-        title_label = tk.Label(container, text="Update Available!",
+        title_label = ttk.Label(container, text="Update Available!",
                                font=("TkDefaultFont", 14, "bold"))
-        title_label.pack(pady=(0, 10))
+        title_label.pack(pady=(0, 15))
 
         # Version info
         info_text = f"A new version of ROM Librarian is available!\n\n"
         info_text += f"Current version: {VERSION}\n"
-        info_text += f"Latest version: {version}\n"
+        info_text += f"Latest version: {version}"
 
-        info_label = tk.Label(container, text=info_text, justify=tk.LEFT)
-        info_label.pack(pady=(0, 10))
+        info_label = ttk.Label(container, text=info_text, justify=tk.LEFT)
+        info_label.pack(pady=(0, 15))
 
-        # Release notes (first 3 lines)
+        # Release notes preview
         if notes:
-            notes_lines = notes.split('\n')[:3]
-            notes_preview = '\n'.join(notes_lines)
-            if len(notes.split('\n')) > 3:
+            # Show first 5 lines or first 200 chars, whichever is shorter
+            notes_lines = notes.split('\n')
+            preview_lines = []
+            char_count = 0
+
+            for line in notes_lines[:7]:
+                if char_count + len(line) > 250:
+                    break
+                preview_lines.append(line)
+                char_count += len(line)
+
+            notes_preview = '\n'.join(preview_lines)
+            if len(notes_lines) > len(preview_lines):
                 notes_preview += "\n..."
 
-            notes_frame = tk.Frame(container, relief=tk.SUNKEN, borderwidth=1)
-            notes_frame.pack(fill=tk.X, pady=(0, 15))
+            notes_header = ttk.Label(container, text="New Features",
+                                    font=("TkDefaultFont", 10, "bold"))
+            notes_header.pack(anchor=tk.W, pady=(0, 5))
 
-            notes_label = tk.Label(notes_frame, text=notes_preview,
-                                   font=("TkDefaultFont", 9),
-                                   justify=tk.LEFT, anchor=tk.W,
-                                   padx=10, pady=10)
-            notes_label.pack(fill=tk.X)
+            notes_frame = ttk.Frame(container, relief=tk.SUNKEN, borderwidth=1)
+            notes_frame.pack(fill=tk.BOTH, pady=(0, 20))
+
+            # Create text widget for better formatting
+            notes_text = tk.Text(notes_frame, height=8, width=50,
+                                font=("TkDefaultFont", 9),
+                                wrap=tk.WORD, padx=10, pady=10,
+                                relief=tk.FLAT, state=tk.NORMAL)
+            notes_text.insert(1.0, notes_preview)
+            notes_text.config(state=tk.DISABLED)
+            notes_text.pack(fill=tk.BOTH, expand=True)
 
         # Buttons
-        button_frame = tk.Frame(container)
+        button_frame = ttk.Frame(container)
         button_frame.pack()
 
-        download_btn = tk.Button(button_frame, text="Download Update",
+        download_btn = ttk.Button(button_frame, text="Download Update",
                                  command=lambda: [webbrowser.open(url), dialog.destroy()],
-                                 width=15)
-        download_btn.pack(side=tk.LEFT, padx=(0, 5))
+                                 width=18)
+        download_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        later_btn = tk.Button(button_frame, text="Later",
-                              command=dialog.destroy, width=10)
+        later_btn = ttk.Button(button_frame, text="Later",
+                              command=dialog.destroy, width=12)
         later_btn.pack(side=tk.LEFT)
 
         dialog.bind('<Escape>', lambda e: dialog.destroy())
@@ -5556,6 +5573,14 @@ def main():
     # Create window with ttkbootstrap if available
     if TTKBOOTSTRAP_AVAILABLE:
         root = ttk_boot.Window(themename=theme_map.get(theme, "litera"))
+
+        # Workaround for PyInstaller + ttkbootstrap localization issues on Linux
+        # Stub out msgcat if it's not available (known issue on CachyOS, Steam Deck, etc.)
+        try:
+            root.tk.eval('::msgcat::mcset en test test')
+        except tk.TclError:
+            # msgcat not available, create stub
+            root.tk.eval('proc ::msgcat::mcset {args} {}')
     else:
         root = tk.Tk()
 
