@@ -21,6 +21,7 @@ from typing import List, Tuple, Dict
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import zlib
+import queue
 
 # Try to import ttkbootstrap for theming
 try:
@@ -541,11 +542,29 @@ class ROMManager:
         self.last_sort = {}  # Track last sort column and direction for each tree
         self.last_filtered_count = 0  # Track filtered files count for display
 
+        # Queue for thread-safe UI updates (Linux compatibility)
+        self.ui_update_queue = queue.Queue()
+        self._start_queue_processor()
+
         self.setup_ui()
 
         # Check for updates on startup if enabled (after UI is ready)
         if self.config.get("check_updates_on_startup", True):
             self.root.after(1000, lambda: self.check_for_updates(manual=False))
+
+    def _start_queue_processor(self):
+        """Start periodic queue processing for thread-safe UI updates"""
+        def process_queue():
+            try:
+                while True:
+                    callback = self.ui_update_queue.get_nowait()
+                    callback()
+            except queue.Empty:
+                pass
+            finally:
+                # Schedule next check
+                self.root.after(100, process_queue)
+        self.root.after(100, process_queue)
 
     def setup_ui(self):
         """Create the main UI layout"""
@@ -1206,9 +1225,9 @@ class ROMManager:
         left_btn_frame = ttk.Frame(left_pane)
         left_btn_frame.pack(fill=tk.X)
 
-        self.delete_originals_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(left_btn_frame, text="Delete originals after compression",
-                       variable=self.delete_originals_var).pack(anchor=tk.W, pady=(0, 5))
+        self.delete_originals_var = tk.IntVar(value=0)
+        tk.Checkbutton(left_btn_frame, text="Delete originals after compression",
+                       variable=self.delete_originals_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
 
         left_btns = ttk.Frame(left_btn_frame)
         left_btns.pack(fill=tk.X)
@@ -1241,9 +1260,9 @@ class ROMManager:
         right_btn_frame = ttk.Frame(right_pane)
         right_btn_frame.pack(fill=tk.X)
 
-        self.delete_archives_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(right_btn_frame, text="Delete archives after extraction",
-                       variable=self.delete_archives_var).pack(anchor=tk.W, pady=(0, 5))
+        self.delete_archives_var = tk.IntVar(value=0)
+        tk.Checkbutton(right_btn_frame, text="Delete archives after extraction",
+                       variable=self.delete_archives_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
 
         right_btns = ttk.Frame(right_btn_frame)
         right_btns.pack(fill=tk.X)
@@ -3182,13 +3201,19 @@ class ROMManager:
         try:
             import glob
 
-            # Get ROM files (left pane)
-            rom_pattern = os.path.join(self.current_folder, extension)
-            rom_files = glob.glob(rom_pattern)
+            # Get ROM files (left pane) - case-insensitive on all platforms
+            # Extract the extension from the pattern (e.g., "*.gba" -> ".gba")
+            ext_part = extension.replace('*', '') if extension.startswith('*') else extension
+            rom_files = []
+            for item in os.listdir(self.current_folder):
+                if item.lower().endswith(ext_part.lower()):
+                    rom_files.append(os.path.join(self.current_folder, item))
 
-            # Get ZIP files (right pane)
-            zip_pattern = os.path.join(self.current_folder, "*.zip")
-            zip_files = glob.glob(zip_pattern)
+            # Get ZIP files (right pane) - case-insensitive
+            zip_files = []
+            for item in os.listdir(self.current_folder):
+                if item.lower().endswith('.zip'):
+                    zip_files.append(os.path.join(self.current_folder, item))
 
             rom_count = 0
             archived_count = 0
@@ -3291,7 +3316,7 @@ class ROMManager:
         compress_list = [f[0] for f in files]
 
         # Confirm and start
-        delete_originals = self.delete_originals_var.get()
+        delete_originals = bool(self.delete_originals_var.get())
         label = "selected" if selected_only else "ALL"
         warning = "WARNING: Original files will be DELETED after compression!" if delete_originals else None
         progress, _ = self.confirm_and_start_operation(
@@ -3339,7 +3364,7 @@ class ROMManager:
         zip_list = [f[0] for f in files]
 
         # Confirm and start
-        delete_archives = self.delete_archives_var.get()
+        delete_archives = bool(self.delete_archives_var.get())
         label = "selected" if selected_only else "ALL"
         warning = "WARNING: ZIP files will be DELETED after extraction!" if delete_archives else None
         progress, _ = self.confirm_and_start_operation(
@@ -3691,13 +3716,13 @@ class ROMManager:
                                 filtered_count += 1
 
             if self.scan_cancelled:
-                self.root.after(0, self._scan_cancelled)
+                self.ui_update_queue.put(self._scan_cancelled)
                 return
 
             total_files = len(files_to_scan)
             if total_files == 0:
-                self.root.after(0, lambda: show_info(self.root, "No Files", "No files found to scan"))
-                self.root.after(0, self._scan_complete)
+                self.ui_update_queue.put(lambda: show_info(self.root, "No Files", "No files found to scan"))
+                self.ui_update_queue.put(self._scan_complete)
                 return
 
             # Hash all files
@@ -3707,7 +3732,7 @@ class ROMManager:
 
             for file_path in files_to_scan:
                 if self.scan_cancelled:
-                    self.root.after(0, self._scan_cancelled)
+                    self.ui_update_queue.put(self._scan_cancelled)
                     return
 
                 hashed_count += 1
@@ -3722,7 +3747,7 @@ class ROMManager:
                 if duplicate_count > 0:
                     status_text += f" | Found: {duplicate_count} groups ({total_dup_files} files)"
 
-                self.root.after(0, lambda p=progress, s=status_text: self._update_scan_progress(p, s))
+                self.ui_update_queue.put(lambda p=progress, s=status_text: self._update_scan_progress(p, s))
 
                 # Calculate hash
                 try:
@@ -3746,13 +3771,13 @@ class ROMManager:
             save_hash_cache(self.hash_cache)
 
             # Display results
-            self.root.after(0, lambda: self._display_duplicate_groups())
-            self.root.after(0, self._scan_complete)
+            self.ui_update_queue.put(lambda: self._display_duplicate_groups())
+            self.ui_update_queue.put(self._scan_complete)
 
         except Exception as e:
             error_msg = f"Scan error: {str(e)}"
-            self.root.after(0, lambda: show_error(self.root, "Scan Error", error_msg))
-            self.root.after(0, self._scan_complete)
+            self.ui_update_queue.put(lambda: show_error(self.root, "Scan Error", error_msg))
+            self.ui_update_queue.put(self._scan_complete)
 
     def _hash_file(self, file_path, method='sha1'):
         """Calculate hash of a file (with caching based on file size and mtime)"""
