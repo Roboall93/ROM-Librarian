@@ -24,17 +24,22 @@ import zlib
 import queue
 
 # Try to import ttkbootstrap for theming
+TTKBOOTSTRAP_AVAILABLE = False
+ttk_boot = None
 try:
     # Disable ttkbootstrap localization to avoid msgcat issues on some Linux systems
     os.environ['TTKBOOTSTRAP_DISABLE_LOCALIZATION'] = '1'
     import ttkbootstrap as ttk_boot
     from ttkbootstrap.constants import *
     TTKBOOTSTRAP_AVAILABLE = True
-except (ImportError, Exception) as e:
-    # Catch ImportError and any TclError from msgcat issues during import
+except Exception as e:
+    # Catch all exceptions including TclError from msgcat issues during import
     TTKBOOTSTRAP_AVAILABLE = False
-    if "msgcat" in str(e):
+    ttk_boot = None
+    if "msgcat" in str(e).lower():
         print(f"Warning: ttkbootstrap disabled due to msgcat error. Using default theme.")
+    elif not isinstance(e, ImportError):
+        print(f"Warning: ttkbootstrap import failed: {str(e)}. Using default theme.")
 
 # App version
 VERSION = "1.1.3"
