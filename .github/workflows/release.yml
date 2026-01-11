@@ -57,7 +57,7 @@ jobs:
           pip install pyinstaller ttkbootstrap
 
       - name: Build executable
-        run: python -m PyInstaller rom_manager.py --onefile --noconsole --name "ROM-Librarian" --hidden-import=ttkbootstrap --hidden-import=ttkbootstrap.localization --hidden-import=ttkbootstrap.themes --clean --noconfirm
+        run: python -m PyInstaller rom_manager.py --onefile --noconsole --name "ROM-Librarian" --hidden-import=ttkbootstrap --hidden-import=ttkbootstrap.localization --hidden-import=ttkbootstrap.themes --hidden-import=PIL --hidden-import=PIL._tkinter_finder --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --clean --noconfirm
 
       - name: Create tarball
         run: tar -czvf "ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz" -C dist "ROM-Librarian"
