@@ -2,63 +2,76 @@
 
 All notable changes to ROM Librarian will be documented in this file.
 
-## [1.0.1] - 2025-01-07
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-### Fixed
-- **Window Size**: Increased default window size (1200x900) to properly show status bar and all duplicate controls
-- **Rename Preview**: Added auto-update of preview when selecting regex presets
-- **Rename Dialog**: Fixed rename complete dialog to properly display long messages with scrollable text
-- **Hash Caching**: Implemented persistent hash caching for duplicate scans - re-scans are now much faster when files haven't changed
-- **Export Dialog**: Fixed duplicate list export dialog showing correct file path instead of last scanned file
-- **Export Format**: Fixed duplicates.txt export to properly show Keep/Delete status for each file
+## [1.2.0] - 2024-XX-XX
 
 ### Added
-- Cache hit statistics displayed in duplicate scan summary
-- Scrollable text widget for long dialog messages
+- **Conversion Tab**: New tab for converting disc images to CHD format
+  - CUE/BIN → CHD conversion support
+  - ISO → CHD conversion support
+  - Smart BIN file validation for CUE files
+  - Bulk conversion with progress tracking
+  - Optional source file deletion after successful conversion
+  - Bundled chdman.exe utility (Windows)
+- **CUE File Awareness**: Both Rename and DAT Rename tabs now automatically update CUE file contents when renaming BIN files
+  - Prevents broken CUE/BIN pairs after renaming operations
+  - Automatic FILE reference updates in CUE files
+  - Logging of all CUE file updates
 
-## [1.0.0] - 2025-01-06
+### Fixed
+- CUE/BIN pairing issues when BIN filenames don't match CUE references
+- Improved BIN file detection by extracting basename from paths in CUE files
+- Added debug logging for CUE file parsing issues
 
-### Initial Release
+### Changed
+- Version bumped to 1.2.0 to reflect major feature additions
+- Updated documentation with CHD conversion and CUE file awareness features
 
-#### Features
+### Technical
+- Added `conversion_tab.py` module with full CHD conversion support
+- Integrated `chdman.exe` into build process via PyInstaller spec file
+- Enhanced both `rename_tab.py` and `dat_rename_tab.py` with `_update_cue_files()` method
+- Uses subprocess for safe external tool execution with timeout handling
+- Automatic cleanup of partial CHD files on conversion failure
 
-##### Rename Tab
-- Regex-based batch renaming with live preview
-- Preset patterns for common cleanup tasks
-- Collision detection with multiple handling strategies
-- Undo support for the last rename operation
+## [1.1.3] - 2024-XX-XX
 
-##### Compression Tab
-- Dual-pane interface showing uncompressed ROMs and ZIP archives
-- Batch compress ROMs to ZIP format
-- Batch extract ZIP archives
-- Auto-detection of ROM file types
-- Safe cleanup - delete only archived files
+### Changed
+- **Major Refactoring**: Reduced main file from 5,803 lines to 788 lines (86.4% reduction)
+- Extracted 6 tabs into modular components:
+  - RenameTab
+  - DATRenameTab
+  - CompressionTab
+  - M3UTab
+  - DuplicatesTab
+  - CompareTab
+- Reorganized project structure with clean separation of concerns:
+  - `core/` - Configuration, constants, logging
+  - `operations/` - File operations, hash calculations, gamelist updates
+  - `parsers/` - DAT file parsing
+  - `ui/` - UI components, helpers, formatters, tree utilities
+  - `ui/tabs/` - Modular tab controllers
 
-##### M3U Creation Tab
-- Multi-disc game detection
-- Automatic M3U playlist generation for emulators
-- Organized storage in `.hidden` folders
+### Technical
+- Improved maintainability and code organization
+- Better separation of UI and business logic
+- Easier to add new features and fix bugs
+- Consistent patterns across all tabs
 
-##### Duplicates Tab
-- Content-based duplicate detection using SHA1/MD5 hashing
-- Multiple scan modes (folder, with subfolders, entire library)
-- Smart auto-selection strategies
-- Export duplicate reports to text file
-- Persistent hash caching for faster re-scans
+## [1.1.2] - 2024-XX-XX
 
-##### Compare Collections Tab
-- Compare two ROM collections to find differences
-- Quick compare (filename) or Deep compare (content hash)
-- Integrity verification for matching files
-- Copy missing files between collections
-- Export missing file lists
+### Added
+- Initial public release
+- Rename Tab with regex-based batch renaming
+- DAT Rename Tab with No-Intro DAT support
+- Compression Tab for ZIP operations
+- M3U Creation Tab for multi-disc games
+- Duplicates Tab with content-based detection
+- Compare Collections Tab
+- Auto-updater functionality
 
-#### Supported Platforms
-- Windows 10/11
-
-#### Supported ROM Formats
-- Cartridge: .nds, .gba, .gbc, .gb, .sfc, .smc, .nes, .n64, .z64, .v64, .md, .smd, .gen, .gg, .sms, .pce, .ngp, .ngc, .ws, .wsc
-- Disc: .bin, .iso, .cue, .chd, .cso, .gcm, .rvz, .wbfs, .wad
-- Modern: .dol, .elf, .nsp, .xci, .nca
-- Archives: .zip, .7z, .rar, .gz
+[1.2.0]: https://github.com/Roboall93/ROM-Librarian/releases/tag/v1.2.0
+[1.1.3]: https://github.com/Roboall93/ROM-Librarian/releases/tag/v1.1.3
+[1.1.2]: https://github.com/Roboall93/ROM-Librarian/releases/tag/v1.1.2

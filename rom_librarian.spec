@@ -5,7 +5,9 @@ block_cipher = None
 a = Analysis(
     ['rom_manager.py'],
     pathex=[],
-    binaries=[],
+    binaries=[
+        ('chdman.exe', '.'),  # Include chdman utility for CHD conversion
+    ],
     datas=[
         ('cartridge.ico', '.'),  # Include the icon file
     ],

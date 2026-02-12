@@ -40,6 +40,9 @@ env/
 Thumbs.db
 nul
 
+# Claude Code temp files
+tmpclaude-*
+
 # User config and cache (generated at runtime)
 .rom_librarian_config.json
 .rom_librarian_hash_cache.json
@@ -51,3 +54,4 @@ release_temp/
 
 # Release packages
 ROM-Librarian-*.zip
+linux-build-env/

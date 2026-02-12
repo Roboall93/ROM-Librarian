@@ -18,6 +18,7 @@ A cross-platform desktop application for managing, organizing, and maintaining r
 - **Collision detection** with multiple handling strategies
 - **Select All/Deselect All** buttons for batch operations
 - **Auto-update gamelist.xml** - Automatically updates EmulationStation/RetroPie metadata when renaming files
+- **CUE file awareness** - Automatically updates CUE file contents when renaming BIN files (keeps disc images intact)
 - **Undo support** for the last rename operation (includes gamelist.xml restoration)
 
 ### DAT Rename Tab
@@ -31,6 +32,7 @@ A cross-platform desktop application for managing, organizing, and maintaining r
 - **Unmatched file tracking** - Shows files that couldn't be matched (for manual review)
 - **Export functionality** - Export list of unmatched files
 - **Auto-update gamelist.xml** - Maintains EmulationStation/RetroPie metadata
+- **CUE file awareness** - Automatically updates CUE file contents when renaming BIN files
 - **Refresh button** - Rescan after operations in other tabs
 - **Full undo support** with tree updates and gamelist.xml restoration
 
@@ -40,6 +42,16 @@ A cross-platform desktop application for managing, organizing, and maintaining r
 - **Batch extract** ZIP archives
 - **Auto-detection** of ROM file types in folder
 - **Safe cleanup** - Option to delete files after successful operations
+
+### Conversion Tab
+- **CHD format conversion** for disc images used with MAME/RetroArch
+- **CUE/BIN → CHD** - Convert PlayStation and other disc images to compressed CHD format
+- **ISO → CHD** - Convert ISO disc images to CHD format
+- **Smart validation** - Automatically validates BIN file references in CUE files
+- **Bulk conversion** - Convert selected files or all files at once
+- **Source cleanup** - Optional deletion of source files after successful conversion
+- **Progress tracking** - Real-time progress with detailed error reporting
+- **Bundled chdman.exe** - No separate installation required (Windows)
 
 ### M3U Creation Tab
 - **Multi-disc game detection** (Disc 1, Disc 2, CD1, etc.)
@@ -56,6 +68,7 @@ A cross-platform desktop application for managing, organizing, and maintaining r
   - Keep largest/smallest file
   - Keep oldest/newest file
 - **Export duplicate reports** to text file
+- **Archive awareness** - Note: Archives are compared as files, not by ROM content inside (extract first for accurate detection)
 
 ### Compare Collections Tab
 - **Compare two ROM collections** to find differences
