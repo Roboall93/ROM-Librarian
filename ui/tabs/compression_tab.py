@@ -5,6 +5,7 @@ Handles compression and extraction of ROM files to/from ZIP archives
 
 import os
 import pathlib
+import re
 import tkinter as tk
 import zipfile
 from tkinter import ttk, messagebox
@@ -82,15 +83,16 @@ class CompressionTab(BaseTab):
         self.uncompressed_tree.column("size", width=80)
         self.uncompressed_tree.column("status", width=70)
         self.manager.setup_custom_selection(self.uncompressed_tree)
-        style = ttk.Style()
-        style.theme_use("clam")  # Important on Windows if colors don't apply
-        style.configure(
-            "Custom.Treeview.Heading",
-            background="#2d2d2d",
-            foreground="white"
-        )
 
-        self.uncompressed_tree.configure(style="Custom.Treeview")
+        # style = ttk.Style()
+        # style.theme_use("clam")  # Important on Windows if colors don't apply
+        # style.configure(
+        #     "Custom.Treeview.Heading",
+        #     background="#2d2d2d",
+        #     foreground="white"
+        # )
+        #
+        # self.uncompressed_tree.configure(style="Custom.Treeview")
 
         # Left pane buttons
         left_btn_frame = ttk.Frame(left_pane)
@@ -118,6 +120,7 @@ class CompressionTab(BaseTab):
         if os.path.exists(file_path):
             self.delete_vimms_btn.state(["!disabled"])
             info = self.parse_vimms_text("Vimm's Lair.txt")
+            self.update_compression_info(info)
             print(info)
 
         self.delete_vimms_btn.pack(side="left", padx=(0, 5))
@@ -132,9 +135,9 @@ class CompressionTab(BaseTab):
         right_list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         self.compressed_tree = create_scrolled_treeview(right_list_frame, ("filename", "size"))
-        self.compressed_tree.heading("filename", text="Filename",
+        self.compressed_tree.heading("filename", text="Filename", anchor="w",
                                      command=lambda: sort_treeview(self.compressed_tree, "filename", False, parse_size))
-        self.compressed_tree.heading("size", text="Size",
+        self.compressed_tree.heading("size", text="Size", anchor="w",
                                      command=lambda: sort_treeview(self.compressed_tree, "size", False, parse_size))
         self.compressed_tree.column("filename", width=300)
         self.compressed_tree.column("size", width=100)
@@ -160,6 +163,31 @@ class CompressionTab(BaseTab):
         # Status bar for compression tab
         self.compression_status_var = tk.StringVar(value="")
         ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=tk.X)
+        # Info bar for compression tab
+        self.compression_info_var = tk.StringVar(value="")
+        ttk.Label(self.tab, textvariable=self.compression_info_var).pack(fill=tk.X)
+
+    def update_compression_info(self, info: dict):
+        single_line = True
+        if single_line:
+            text = (
+                "Vimm's Lair.txt Info : "
+                f"{info.get('platform', '?')} | "
+                f"{info.get('iso_name', '?')} | "
+                f"CRC {info.get('crc', '-')} | "
+                f"MD5 {info.get('md5', '-')}"
+            )
+        else:
+            text = (
+                f"Platform : {info.get('platform', '-')}\n"
+                f"File     : {info.get('iso_name', '-')}\n"
+                f"CRC      : {info.get('crc', '-')}\n"
+                f"MD5      : {info.get('md5', '-')}\n"
+                f"SHA-1    : {info.get('sha1', '-')}\n"
+                f"Date     : {info.get('date', '-')}"
+            )
+
+        self.compression_info_var.set(text)
 
     def set_compression_extension(self, extension):
         """Set the file extension filter"""
@@ -387,23 +415,30 @@ class CompressionTab(BaseTab):
         show_info(self.root, "Delete Complete", result_msg)
         self.refresh_compression_lists()
 
-    @staticmethod
-    def parse_vimms_text(path):
+    def parse_vimms_text(self, path):
         text = Path(path).read_text(encoding="utf-8")
-        import re
+
+        def find(pattern):
+            m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+            return m.group(1).strip() if m else None
+
         return {
-            "iso_name": re.search(r"^(.+\.iso)$", text, re.MULTILINE).group(1),
-            "crc": re.search(r"CRC:\s*([A-F0-9]+)", text).group(1),
-            "md5": re.search(r"MD5:\s*([A-F0-9]+)", text).group(1),
-            "sha1": re.search(r"SHA-1:\s*([A-F0-9]+)", text).group(1),
-            "date": re.search(r"Date:\s*([\d\-]+)", text).group(1),
+            "platform": find(r"This\s+(.+?)\s+game\s+is\s+verified"),
+            "iso_name": find(r"^(.+\.(?:iso|bin|img|nrg|mdf|cue|chd|gdi))$"),
+            "crc": find(r"CRC:\s*([A-Fa-f0-9]+)"),
+            "md5": find(r"MD5:\s*([A-Fa-f0-9]+)"),
+            "sha1": find(r"SHA-1:\s*([A-Fa-f0-9]+)"),
+            "date": find(r"Date:\s*([\d\-]+)"),
         }
+
     def delete_vimms_text(self):
-        file_path = pathlib.Path(self.get_current_folder()) / "Vimm's Lair.txt"
+        current_folder = self.get_current_folder()
+        file_path = Path(current_folder) / "Vimm's Lair.txt"
 
         if file_path.exists():
             try:
                 info = self.parse_vimms_text(file_path)
+                self.update_compression_info(info)
                 print(info)
                 file_path.unlink()
                 messagebox.showinfo("Deleted", "Vimm's Lair.txt was deleted.")
