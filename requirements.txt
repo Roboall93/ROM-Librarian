@@ -3,3 +3,5 @@
 
 # Optional - for theme support (light/dark mode)
 ttkbootstrap>=1.10.0
+
+py7zr
