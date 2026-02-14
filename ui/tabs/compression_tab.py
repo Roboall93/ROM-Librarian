@@ -115,13 +115,13 @@ class CompressionTab(BaseTab):
         self.delete_archived_btn = ttk.Button(left_btns, text="Delete Archived Only",
                   command=self.delete_archived_roms, state="disabled")
 
-        # Disable if file exists
-        file_path = "Vimm's Lair.txt"
-        if os.path.exists(file_path):
-            self.delete_vimms_btn.state(["!disabled"])
-            info = self.parse_vimms_text("Vimm's Lair.txt")
-            self.update_compression_info(info)
-            print(info)
+        # # Disable if file exists
+        # file_path = "Vimm's Lair.txt"
+        # if os.path.exists(file_path):
+        #     self.delete_vimms_btn.state(["!disabled"])
+        #     info = self.parse_vimms_text("Vimm's Lair.txt")
+        #     self.update_compression_info(info)
+        #     print(info)
 
         self.delete_vimms_btn.pack(side="left", padx=(0, 5))
         self.delete_archived_btn.pack(side="left", padx=(0, 5))
@@ -283,12 +283,23 @@ class CompressionTab(BaseTab):
         self._compress_roms(selected_only=False)
 
     def update_vimms_delete_button(self):
+
+        # Disable if file exists
+        # file_path = "Vimm's Lair.txt"
+        # if os.path.exists(file_path):
+        #     self.delete_vimms_btn.state(["!disabled"])
+        #     info = self.parse_vimms_text("Vimm's Lair.txt")
+        #     self.update_compression_info(info)
+        #     print(info)
+
         current_folder = self.get_current_folder()
         if current_folder is not None:
             file_path = Path(current_folder) / "Vimm's Lair.txt"
 
             if file_path.exists():
                 self.delete_vimms_btn.state(["!disabled"])
+                info = self.parse_vimms_text(file_path)
+                self.update_compression_info(info)
             else:
                 self.delete_vimms_btn.state(["disabled"])
 
