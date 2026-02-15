@@ -1,6 +1,6 @@
 """
 Compression tab for ROM Librarian
-Handles compression and extraction of ROM files to/from ZIP archives
+Handles compression and extraction of ROM files to/from ZIP and 7z archives
 """
 
 import os
@@ -8,11 +8,14 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import zipfile
+import subprocess
+import shutil
 
 from .base_tab import BaseTab
 from ui.helpers import ProgressDialog, show_info, ask_yesno
 from ui.tree_utils import create_scrolled_treeview, sort_treeview, get_files_from_tree
 from ui.formatters import format_size, parse_size, format_operation_results
+from core import logger
 
 
 class CompressionTab(BaseTab):
@@ -20,6 +23,7 @@ class CompressionTab(BaseTab):
 
     def __init__(self, parent_notebook, root, manager):
         super().__init__(parent_notebook, root, manager)
+        self.compression_format = tk.StringVar(value="zip")  # "zip" or "7z"
         self.setup()
         self.add_to_notebook("Compression")
 
@@ -82,6 +86,13 @@ class CompressionTab(BaseTab):
         left_btn_frame = ttk.Frame(left_pane)
         left_btn_frame.pack(fill=tk.X)
 
+        # Archive format selection
+        format_frame = ttk.Frame(left_btn_frame)
+        format_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(format_frame, text="Archive Format:").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(format_frame, text="ZIP", variable=self.compression_format, value="zip").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(format_frame, text="7z (better compression)", variable=self.compression_format, value="7z").pack(side=tk.LEFT)
+
         self.delete_originals_var = tk.IntVar(value=0)
         tk.Checkbutton(left_btn_frame, text="Delete originals after compression",
                        variable=self.delete_originals_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
@@ -99,7 +110,7 @@ class CompressionTab(BaseTab):
         self.delete_archived_btn.pack(side=tk.LEFT)
 
         # === RIGHT PANE: Compressed Archives ===
-        right_pane = ttk.LabelFrame(panes_frame, text="Compressed Archives", padding="10")
+        right_pane = ttk.LabelFrame(panes_frame, text="Compressed Archives (ZIP/7z)", padding="10")
         right_pane.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
         # Right pane list
@@ -135,6 +146,33 @@ class CompressionTab(BaseTab):
         # Status bar for compression tab
         self.compression_status_var = tk.StringVar(value="")
         ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=tk.X)
+
+    def _find_7z(self):
+        """Find 7z.exe in script folder or PATH"""
+        # Check same folder as script first
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Go up two levels from ui/tabs to root
+        root_dir = os.path.dirname(os.path.dirname(script_dir))
+        local_7z = os.path.join(root_dir, "7z.exe")
+
+        if os.path.exists(local_7z):
+            return local_7z
+
+        # Check in PATH
+        seven_z_in_path = shutil.which("7z.exe")
+        if seven_z_in_path:
+            return seven_z_in_path
+
+        # Check common installation paths
+        common_paths = [
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe"
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+
+        return None
 
     def set_compression_extension(self, extension):
         """Set the file extension filter"""
@@ -175,19 +213,21 @@ class CompressionTab(BaseTab):
                     size = os.path.getsize(file_path)
                     size_str = format_size(size)
 
-                    # Check if corresponding ZIP exists
-                    zip_name = os.path.splitext(filename)[0] + ".zip"
-                    status = "Archived" if zip_name in all_files else ""
+                    # Check if corresponding ZIP or 7z exists
+                    base_name = os.path.splitext(filename)[0]
+                    zip_name = base_name + ".zip"
+                    seven_z_name = base_name + ".7z"
+                    status = "Archived" if (zip_name in all_files or seven_z_name in all_files) else ""
                     if status == "Archived":
                         archived_count += 1
 
                     self.uncompressed_tree.insert("", "end", values=(filename, size_str, status))
                     uncompressed_count += 1
 
-            # Populate right pane (ZIP archives)
+            # Populate right pane (ZIP and 7z archives)
             compressed_count = 0
             for filename in all_files:
-                if filename.lower().endswith(".zip"):
+                if filename.lower().endswith((".zip", ".7z")):
                     file_path = os.path.join(current_folder, filename)
                     size = os.path.getsize(file_path)
                     size_str = format_size(size)
@@ -230,12 +270,27 @@ class CompressionTab(BaseTab):
 
         compress_list = [f[0] for f in files]
 
+        # Get compression format
+        compression_format = self.compression_format.get()
+
+        # Check for 7z.exe if 7z format selected
+        seven_z_path = None
+        if compression_format == "7z":
+            seven_z_path = self._find_7z()
+            if not seven_z_path:
+                show_info(self.root, "Error",
+                         "7z.exe not found!\n\n"
+                         "Please install 7-Zip or ensure 7z.exe is in your system PATH.\n\n"
+                         "Download from: https://www.7-zip.org/")
+                return
+
         # Confirm and start
         delete_originals = bool(self.delete_originals_var.get())
         label = "selected" if selected_only else "ALL"
+        format_label = "7z" if compression_format == "7z" else "ZIP"
         warning = "WARNING: Original files will be DELETED after compression!" if delete_originals else None
         progress, _ = self.manager.confirm_and_start_operation(
-            f"Compress {len(compress_list)} {label} file(s)", 1,
+            f"Compress {len(compress_list)} {label} file(s) to {format_label}", 1,
             warning_msg=warning, title="Confirm Compression"
         )
         if not progress:
@@ -251,7 +306,7 @@ class CompressionTab(BaseTab):
 
         self.manager.run_worker_thread(
             self._perform_compression,
-            args=(compress_list, progress, delete_originals, self.compression_results),
+            args=(compress_list, progress, delete_originals, compression_format, seven_z_path, self.compression_results),
             progress=progress,
             on_complete=self._show_compression_results
         )
@@ -384,7 +439,7 @@ class CompressionTab(BaseTab):
 
         self.manager.run_worker_thread(do_delete, progress=progress, on_complete=show_results)
 
-    def _perform_compression(self, compress_list, progress, delete_originals, results):
+    def _perform_compression(self, compress_list, progress, delete_originals, compression_format, seven_z_path, results):
         """Perform the actual compression operations (runs in worker thread)"""
         current_folder = self.get_current_folder()
 
@@ -401,26 +456,49 @@ class CompressionTab(BaseTab):
                     results['skipped'] += 1
                     continue
 
-                zip_name = os.path.splitext(filename)[0] + ".zip"
-                zip_path = os.path.join(current_folder, zip_name)
+                # Determine archive name and path based on format
+                if compression_format == "7z":
+                    archive_ext = ".7z"
+                else:
+                    archive_ext = ".zip"
 
-                # Skip if ZIP already exists
-                if os.path.exists(zip_path):
-                    results['errors'].append(f"{filename}: ZIP already exists")
+                archive_name = os.path.splitext(filename)[0] + archive_ext
+                archive_path = os.path.join(current_folder, archive_name)
+
+                # Skip if archive already exists
+                if os.path.exists(archive_path):
+                    results['errors'].append(f"{filename}: {archive_ext.upper()} already exists")
                     results['skipped'] += 1
                     continue
 
-                # Create ZIP file (level 6 for good balance of speed and compression)
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
-                    zipf.write(file_path, filename)
+                # Compress based on format
+                if compression_format == "7z":
+                    # Use 7z.exe for 7z compression
+                    cmd = [seven_z_path, "a", "-mx=5", archive_path, file_path]  # -mx=5 is normal compression
+                    process = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        cwd=current_folder
+                    )
 
-                # Verify ZIP was created
-                if not os.path.exists(zip_path):
-                    results['errors'].append(f"{filename}: Failed to create ZIP")
+                    if process.returncode != 0:
+                        results['errors'].append(f"{filename}: 7z compression failed")
+                        results['failed'] += 1
+                        continue
+
+                else:
+                    # Use zipfile for ZIP compression
+                    with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
+                        zipf.write(file_path, filename)
+
+                # Verify archive was created
+                if not os.path.exists(archive_path):
+                    results['errors'].append(f"{filename}: Failed to create {archive_ext.upper()}")
                     results['failed'] += 1
                     continue
 
-                compressed_size = os.path.getsize(zip_path)
+                compressed_size = os.path.getsize(archive_path)
                 savings = original_size - compressed_size
                 results['total_savings'] += savings
 
