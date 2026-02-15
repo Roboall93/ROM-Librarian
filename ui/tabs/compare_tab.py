@@ -63,6 +63,15 @@ class CompareTab(BaseTab):
                                    foreground="#666666")
         guidance_label.pack(anchor=tk.W)
 
+        # Archive limitation note
+        note_label = ttk.Label(guidance_frame,
+                              text="⚠ Note: Archives (.zip, .7z, etc.) are compared as files, not by ROM content inside. "
+                                   "Extract archives first for accurate content comparison.",
+                              font=("TkDefaultFont", 8, "italic"),
+                              foreground="#cc7000",
+                              wraplength=800)
+        note_label.pack(anchor=tk.W, pady=(5, 0))
+
         # === TOP SECTION: Comparison Setup ===
         setup_frame = ttk.LabelFrame(self.tab, text="Comparison Setup", padding="10")
         setup_frame.pack(fill=tk.X, pady=(0, 10))
