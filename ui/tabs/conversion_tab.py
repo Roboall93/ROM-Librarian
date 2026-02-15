@@ -37,22 +37,17 @@ class ConversionTab(BaseTab):
                                    foreground="#666666")
         guidance_label.pack(anchor=tk.W)
 
-        # Warning note about chdman requirement
-        warning_frame = ttk.Frame(self.tab)
-        warning_frame.pack(fill=tk.X, pady=(0, 10))
-        warning_label = ttk.Label(warning_frame,
-                                  text="⚠ Requires chdman.exe (from MAME tools) in same folder as script or in PATH",
-                                  font=("TkDefaultFont", 9, "bold"),
-                                  foreground="#cc6600")
-        warning_label.pack(anchor=tk.W)
+        # Info notes
+        info_frame = ttk.Frame(self.tab)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Info note about conversion time
-        info_label = ttk.Label(warning_frame,
-                              text="ℹ Large files (CD/DVD images) may take several minutes to convert. Progress dialog will remain open during conversion.",
-                              font=("TkDefaultFont", 8, "italic"),
+        info_label = ttk.Label(info_frame,
+                              text="ℹ Requires chdman.exe (bundled with Windows release or install MAME tools). "
+                                   "Large files may take several minutes to convert.",
+                              font=("TkDefaultFont", 9, "italic"),
                               foreground="#666666",
                               wraplength=800)
-        info_label.pack(anchor=tk.W, pady=(3, 0))
+        info_label.pack(anchor=tk.W)
 
         # Top control frame - Conversion mode selector
         control_frame = ttk.Frame(self.tab)
