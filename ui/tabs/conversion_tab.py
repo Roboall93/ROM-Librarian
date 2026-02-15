@@ -46,6 +46,14 @@ class ConversionTab(BaseTab):
                                   foreground="#cc6600")
         warning_label.pack(anchor=tk.W)
 
+        # Info note about conversion time
+        info_label = ttk.Label(warning_frame,
+                              text="ℹ Large files (CD/DVD images) may take several minutes to convert. Progress dialog will remain open during conversion.",
+                              font=("TkDefaultFont", 8, "italic"),
+                              foreground="#666666",
+                              wraplength=800)
+        info_label.pack(anchor=tk.W, pady=(3, 0))
+
         # Top control frame - Conversion mode selector
         control_frame = ttk.Frame(self.tab)
         control_frame.pack(fill=tk.X, pady=(0, 10))
@@ -293,6 +301,10 @@ class ConversionTab(BaseTab):
                 chd_name = os.path.splitext(filename)[0] + ".chd"
                 chd_path = os.path.join(current_folder, chd_name)
 
+                # Get file size for user feedback
+                file_size_bytes = os.path.getsize(file_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+
                 # Skip if CHD already exists
                 if os.path.exists(chd_path):
                     results['errors'].append(f"{filename}: CHD already exists")
@@ -322,6 +334,13 @@ class ConversionTab(BaseTab):
                 # Build chdman command
                 # For both CUE/BIN and ISO, we use createcd
                 cmd = [chdman_path, "createcd", "-i", file_path, "-o", chd_path]
+
+                # Update progress to show we're actively converting
+                if file_size_mb > 500:
+                    # Large file - warn user this will take time
+                    progress.update(idx, f"{filename} (converting {file_size_mb:.0f} MB - this may take several minutes...)")
+                else:
+                    progress.update(idx, f"{filename} (converting...)")
 
                 # Run chdman
                 process = subprocess.run(
