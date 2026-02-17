@@ -29,7 +29,7 @@ class CompressionTab(BaseTab):
         super().__init__(parent_notebook, root, manager)
         self.setup()
         self.add_to_notebook("Compression")
-        self.update_vimms_delete_button()
+        # self.update_vimms_delete_button()
 
     def setup(self):
         """Setup the compression tab with dual-pane layout"""
@@ -53,7 +53,7 @@ class CompressionTab(BaseTab):
 
         # Common extension quick buttons
         ttk.Label(control_frame, text="Quick:").pack(side=tk.LEFT, padx=(10, 5))
-        common_exts = ["*.gba", "*.gbc", "*.gb", "*.smc", "*.sfc", "*.nes", "*.md", "*.n64", "*.rvz", "*.j64", "*.ciso", "*.iso"]
+        common_exts = ["*.gba", "*.gbc", "*.gb", "*.smc", "*.sfc", "*.nes", "*.md", "*.n64", "*.rvz", "*.j64", "*.ciso", "*.iso", "*.chd"]
         for ext in common_exts:
             btn = ttk.Button(control_frame, text=ext.replace("*.", "").upper(), width=5,
                            command=lambda e=ext: self.set_compression_extension(e))
@@ -358,13 +358,13 @@ class CompressionTab(BaseTab):
         """Extract selected ZIP files from the right pane"""
         self._extract_zips(selected_only=True)
         # Disable if file exists
-        self.update_vimms_delete_button()
+        # self.update_vimms_delete_button()
 
     def extract_all_zips(self):
         """Extract all ZIP files from the right pane"""
         self._extract_zips(selected_only=False)
         # Disable if file exists
-        self.update_vimms_delete_button()
+        # self.update_vimms_delete_button()
 
     def _extract_zips(self, selected_only=True):
         """Extract ZIP files from the right pane"""
@@ -678,84 +678,71 @@ class CompressionTab(BaseTab):
                     with tempfile.TemporaryDirectory() as temp_dir:
                         with py7zr.SevenZipFile(zip_path, mode="r") as z7pf:
                             z7pf.extractall(path=temp_dir)
-
                         for extracted_path in Path(temp_dir).rglob("*"):
-
                             if extracted_path.is_dir():
                                 continue
-
                             filename = extracted_path.name
-
                             # 🎯 Handle Vimm's Lair.txt
                             if filename == "Vimm's Lair.txt":
                                 # vimms_path = os.path.join(current_folder, filename)
                                 text = Path(extracted_path).read_text(encoding="utf-8")
                                 self.parse_vimms_text(text)
-
                                 os.remove(extracted_path)
                                 vimms_found = True
                                 continue
 
                             target = Path(current_folder) / filename
-                            shutil.move(str(extracted_path), str(target))
-
                             check_overwrite = bool(self.check_overwrite_var.get())
-                            # if target.exists():
-                            #     results['errors'].append(
-                            #         f"{zip_filename}: Would overwrite {filename}"
-                            #     )
-                            #     continue
-                            if extracted_path != target and target.exists():
-                                parent = target.parent
-                                while parent != Path(current_folder):
-                                    if parent.is_dir() and not any(parent.iterdir()):
-                                        parent.rmdir()
-                                        parent = parent.parent
-                                    else:
-                                        break
-
-                        # if vimms:
-                        #     z7pf.extractall(current_folder)
-                        #     # self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
-                        #     # self.delete_vimms_text()
-                        #     self.auto_detect_extension()
-                        # else:
-                        #     z7pf.extractall(current_folder)
-                        self.auto_detect_extension()
-                        results['extracted'] += 1
+                            if target.exists() and check_overwrite:
+                                results['errors'].append(
+                                    f"{zip_filename}: Would overwrite {filename}"
+                                )
+                                results['skipped'] += 1
+                                continue
+                            shutil.move(str(extracted_path), str(target))
 
                 elif extension == ".zip":
                     if not zipfile.is_zipfile(zip_path):
                         results['errors'].append(f"{zip_filename}: Not a valid ZIP file")
                         results['skipped'] += 1
                         continue
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        with py7zr.SevenZipFile(zip_path, mode="r") as zipf:
+                            zipf.extractall(path=temp_dir)
+                        for extracted_path in Path(temp_dir).rglob("*"):
+                            if extracted_path.is_dir():
+                                continue
+                            filename = extracted_path.name
+                            # 🎯 Handle Vimm's Lair.txt
+                            if filename == "Vimm's Lair.txt":
+                                # vimms_path = os.path.join(current_folder, filename)
+                                text = Path(extracted_path).read_text(encoding="utf-8")
+                                self.parse_vimms_text(text)
+                                os.remove(extracted_path)
+                                vimms_found = True
+                                continue
 
-                    with zipfile.ZipFile(zip_path, 'r') as zipf:
-                        file_list = zipf.namelist()
-                        if "Vimm's Lair.txt" in file_list:
-                            vimms = True
-                            file_list.remove("Vimm's Lair.txt")
+                            target = Path(current_folder) / filename
+                            check_overwrite = bool(self.check_overwrite_var.get())
+                            if target.exists() and check_overwrite:
+                                results['errors'].append(
+                                    f"{zip_filename}: Would overwrite {filename}"
+                                )
+                                results['skipped'] += 1
+                                continue
+                            shutil.move(str(extracted_path), str(target))
 
-                        existing_files = [
-                            f for f in file_list
-                            if os.path.exists(os.path.join(current_folder, f))
-                        ]
-
-                        if existing_files:
-                            results['errors'].append(
-                                f"{zip_filename}: Would overwrite {len(existing_files)} file(s)"
-                            )
-                            results['skipped'] += 1
-                            continue
-
-                        if vimms:
-                            zipf.extractall(current_folder)
-                            self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
-                            self.delete_vimms_text()
-                            self.auto_detect_extension()
+                if extracted_path != target and target.exists():
+                    parent = target.parent
+                    while parent != Path(current_folder):
+                        if parent.is_dir() and not any(parent.iterdir()):
+                            parent.rmdir()
+                            parent = parent.parent
                         else:
-                            zipf.extractall(current_folder)
-                        results['extracted'] += 1
+                            break
+
+                self.auto_detect_extension()
+                results['extracted'] += 1
 
                 # Delete archive if requested
                 if delete_zips:
