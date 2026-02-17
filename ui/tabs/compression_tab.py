@@ -51,11 +51,11 @@ class CompressionTab(BaseTab):
 
         # Common extension quick buttons
         ttk.Label(control_frame, text="Quick:").pack(side=tk.LEFT, padx=(10, 5))
-        common_exts = ["*.gba", "*.gbc", "*.gb", "*.smc", "*.sfc", "*.nes", "*.md", "*.n64", "*.rvz", "*.j64"]
+        common_exts = ["*.gba", "*.gbc", "*.gb", "*.smc", "*.sfc", "*.nes", "*.md", "*.n64", "*.rvz", "*.j64", "*.ciso", "*.iso"]
         for ext in common_exts:
             btn = ttk.Button(control_frame, text=ext.replace("*.", "").upper(), width=5,
                            command=lambda e=ext: self.set_compression_extension(e))
-            btn.pack(side=tk.LEFT, padx=2)
+            btn.pack(side="left", padx=2)
 
         # Dual-pane container
         panes_frame = ttk.Frame(self.tab)
@@ -84,14 +84,14 @@ class CompressionTab(BaseTab):
         self.uncompressed_tree.column("status", width=70)
         self.manager.setup_custom_selection(self.uncompressed_tree)
 
-        # style = ttk.Style()
-        # style.theme_use("clam")  # Important on Windows if colors don't apply
-        # style.configure(
-        #     "Custom.Treeview.Heading",
-        #     background="#2d2d2d",
-        #     foreground="white"
-        # )
-        #
+        style = ttk.Style()
+        style.theme_use("clam")  # Important on Windows if colors don't apply
+        style.configure(
+            "Custom.Treeview.Heading",
+            background="#2d2d2d",
+            foreground="white"
+        )
+
         # self.uncompressed_tree.configure(style="Custom.Treeview")
 
         # Left pane buttons
@@ -99,7 +99,7 @@ class CompressionTab(BaseTab):
         left_btn_frame.pack(fill=tk.X)
 
         self.delete_originals_var = tk.IntVar(value=0)
-        tk.Checkbutton(left_btn_frame, text="Delete originals after compression",
+        ttk.Checkbutton(left_btn_frame, text="Delete originals after compression",
                        variable=self.delete_originals_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
 
         left_btns = ttk.Frame(left_btn_frame)
@@ -148,7 +148,7 @@ class CompressionTab(BaseTab):
         right_btn_frame.pack(fill=tk.X)
 
         self.delete_archives_var = tk.IntVar(value=0)
-        tk.Checkbutton(right_btn_frame, text="Delete archives after extraction",
+        ttk.Checkbutton(right_btn_frame, text="Delete archives after extraction",
                        variable=self.delete_archives_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
 
         right_btns = ttk.Frame(right_btn_frame)
@@ -610,6 +610,9 @@ class CompressionTab(BaseTab):
 
                     with py7zr.SevenZipFile(zip_path, mode="r") as z7pf:
                         file_list = z7pf.namelist()
+                        if "Vimm's Lair.txt" in file_list:
+                            vimms = True
+                            file_list.remove("Vimm's Lair.txt")
 
                         # Check overwrite
                         existing_files = [
@@ -624,7 +627,13 @@ class CompressionTab(BaseTab):
                             results['skipped'] += 1
                             continue
 
-                        z7pf.extractall(current_folder)
+                        if vimms:
+                            z7pf.extractall(current_folder)
+                            self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
+                            self.delete_vimms_text()
+                            self.auto_detect_extension()
+                        else:
+                            z7pf.extractall(current_folder)
                         results['extracted'] += 1
 
                 elif extension == ".zip":
@@ -635,6 +644,9 @@ class CompressionTab(BaseTab):
 
                     with zipfile.ZipFile(zip_path, 'r') as zipf:
                         file_list = zipf.namelist()
+                        if "Vimm's Lair.txt" in file_list:
+                            vimms = True
+                            file_list.remove("Vimm's Lair.txt")
 
                         existing_files = [
                             f for f in file_list
@@ -648,7 +660,13 @@ class CompressionTab(BaseTab):
                             results['skipped'] += 1
                             continue
 
-                        zipf.extractall(current_folder)
+                        if vimms:
+                            zipf.extractall(current_folder)
+                            self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
+                            self.delete_vimms_text()
+                            self.auto_detect_extension()
+                        else:
+                            zipf.extractall(current_folder)
                         results['extracted'] += 1
 
                 # Delete archive if requested
@@ -663,6 +681,61 @@ class CompressionTab(BaseTab):
             except Exception as e:
                 results['errors'].append(f"{zip_filename}: {str(e)}")
                 results['failed'] += 1
+
+    def auto_detect_extension(self):
+        """Auto-detect ROM file extensions in the current folder"""
+        current_folder = self.get_current_folder()
+        if not current_folder:
+            return
+
+        # Common ROM extensions to look for
+        rom_extensions = [
+            '.gba', '.gbc', '.gb', '.smc', '.sfc', '.nes',
+            '.md', '.gen', '.n64', '.z64', '.v64', '.nds',
+            '.cia', '.3ds', '.iso', '.chd', '.cue', '.bin',
+            '.gcm', '.cso', '.wbfs', '.wad', '.u8'
+        ]
+
+        # Count files by extension
+        extension_counts = {}
+        try:
+            for item in os.listdir(current_folder):
+                full_path = os.path.join(current_folder, item)
+                if os.path.isfile(full_path):
+                    _, ext = os.path.splitext(item)
+                    ext_lower = ext.lower()
+                    if ext_lower in rom_extensions:
+                        extension_counts[ext_lower] = extension_counts.get(ext_lower, 0) + 1
+
+            # If we found ROM files, set to the most common extension
+            if extension_counts:
+                most_common_ext = max(extension_counts, key=extension_counts.get)
+                most_common_count = extension_counts[most_common_ext]
+
+                # Set the compression extension filter
+                self.compress_ext_var.set(f"*{most_common_ext}")
+                self.refresh_compression_lists()
+
+                # Update status to show what was detected
+                if len(extension_counts) > 1:
+                    other_exts = [f"{ext.upper()}: {count}" for ext, count in extension_counts.items() if ext != most_common_ext]
+                    detection_msg = f"Auto-detected: {most_common_count} {most_common_ext.upper()} files"
+                    if other_exts:
+                        detection_msg += f" (also found: {', '.join(other_exts[:3])})"
+                    self.manager.status_var.set(detection_msg)
+                else:
+                    self.manager.status_var.set(f"Auto-detected: {most_common_count} {most_common_ext.upper()} files")
+            else:
+                # Check if we have zip files
+                zip_count = sum(1 for _, _, path in self.files_data if path.lower().endswith('.zip'))
+                if zip_count > 0:
+                    self.manager.status_var.set(f"Loaded {len(self.files_data)} files ({zip_count} zipped)")
+                else:
+                    self.manager.status_var.set(f"Loaded {len(self.files_data)} files")
+
+        except Exception as e:
+            # Silently fail auto-detection
+            pass
 
     def _show_uncompression_results(self):
         """Show uncompression results and update UI (runs in main thread)"""

@@ -142,11 +142,12 @@ class ROMManager:
         ttk.Label(top_frame, text="ROM Folder:").pack(side=tk.LEFT, padx=(0, 5))
         self.folder_var = tk.StringVar()
         ttk.Entry(top_frame, textvariable=self.folder_var, state="readonly", width=60).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(top_frame, text="Browse...", command=self.browse_folder).pack(side=tk.LEFT)
+        ttk.Button(top_frame, text="Browse...", command=lambda: self.choose_folder(usedownloadfolder=False)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(top_frame, text="Downloads", command=lambda: self.choose_folder(usedownloadfolder=True)).pack(side=tk.LEFT, padx=(0, 5))
 
         # Create tabbed notebook
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=(0, 5))
 
         # Create tabs
         self.rename_tab = RenameTab(self.notebook, self.root, self)
@@ -159,7 +160,7 @@ class ROMManager:
 
         # Bottom status bar (shared across all tabs)
         bottom_frame = ttk.Frame(self.root, padding="5")
-        bottom_frame.pack(fill=tk.X)
+        bottom_frame.pack(fill="x")
 
         self.status_var = tk.StringVar(value="Select a folder to begin")
         ttk.Label(bottom_frame, textvariable=self.status_var).pack(side=tk.LEFT)
@@ -557,9 +558,12 @@ class ROMManager:
         tree.bind("<B1-Motion>", on_drag)
         tree.bind("<ButtonRelease-1>", on_release)
 
-    def browse_folder(self):
+    def choose_folder(self, usedownloadfolder: bool = False):
         """Open folder browser dialog"""
-        folder = filedialog.askdirectory(title="Select ROM Folder")
+        if usedownloadfolder:
+            folder = Path.home() / "Downloads"
+        else:
+            folder = filedialog.askdirectory(title="Select ROM Folder")
         if folder:
             self.current_folder = folder
             self.folder_var.set(folder)
