@@ -6,6 +6,8 @@ Handles compression and extraction of ROM files to/from ZIP archives
 import os
 import pathlib
 import re
+import shutil
+import tempfile
 import tkinter as tk
 import zipfile
 from tkinter import ttk, messagebox
@@ -110,8 +112,8 @@ class CompressionTab(BaseTab):
                   command=self.compress_selected_roms).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(left_btns, text="Compress All",
                   command=self.compress_all_roms).pack(side=tk.LEFT, padx=(0, 5))
-        self.delete_vimms_btn = ttk.Button(left_btns, text="Delete Vimm's Lair.txt",
-                   command=self.delete_vimms_text)
+        # self.delete_vimms_btn = ttk.Button(left_btns, text="Delete Vimm's Lair.txt",
+        #            command=self.delete_vimms_text)
         self.delete_archived_btn = ttk.Button(left_btns, text="Delete Archived Only",
                   command=self.delete_archived_roms, state="disabled")
 
@@ -123,7 +125,7 @@ class CompressionTab(BaseTab):
         #     self.update_compression_info(info)
         #     print(info)
 
-        self.delete_vimms_btn.pack(side="left", padx=(0, 5))
+        # self.delete_vimms_btn.pack(side="left", padx=(0, 5))
         self.delete_archived_btn.pack(side="left", padx=(0, 5))
 
         # === RIGHT PANE: Compressed Archives ===
@@ -146,11 +148,14 @@ class CompressionTab(BaseTab):
         # Right pane buttons
         right_btn_frame = ttk.Frame(right_pane)
         right_btn_frame.pack(fill=tk.X)
-
+        options_frame = ttk.Frame(right_btn_frame)
+        options_frame.pack(anchor="w", fill=tk.X, pady=(0, 5))
         self.delete_archives_var = tk.IntVar(value=0)
-        ttk.Checkbutton(right_btn_frame, text="Delete archives after extraction",
-                       variable=self.delete_archives_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
-
+        ttk.Checkbutton(options_frame, text="Delete archives after extraction",
+                       variable=self.delete_archives_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
+        self.check_overwrite_var = tk.IntVar(value=0)
+        ttk.Checkbutton(options_frame, text="Check and Avoid Overwrite",
+                       variable=self.check_overwrite_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
         right_btns = ttk.Frame(right_btn_frame)
         right_btns.pack(fill=tk.X)
         ttk.Button(right_btns, text="Extract Selected",
@@ -159,7 +164,9 @@ class CompressionTab(BaseTab):
                   command=self.extract_all_zips).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(right_btns, text="Delete Selected",
                   command=self.delete_selected_zips).pack(side=tk.LEFT)
-
+        self.delete_unarchived_btn = (ttk.Button(right_btns, text="Delete Extracted Only",
+                  command=self.delete_extracted_roms, state="disabled"))
+        self.delete_unarchived_btn.pack(side=tk.LEFT)
         # Status bar for compression tab
         self.compression_status_var = tk.StringVar(value="")
         ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=tk.X)
@@ -268,9 +275,10 @@ class CompressionTab(BaseTab):
             # Enable/disable "Delete Archived Only" button
             if archived_count > 0:
                 self.delete_archived_btn.config(state="normal")
+                self.delete_unarchived_btn.config(state="normal")
             else:
                 self.delete_archived_btn.config(state="disabled")
-
+                self.delete_unarchived_btn.config(state="disabled")
         except Exception as e:
             show_info(self.root, "Error", f"Failed to refresh lists:\n{str(e)}")
 
@@ -298,7 +306,9 @@ class CompressionTab(BaseTab):
 
             if file_path.exists():
                 self.delete_vimms_btn.state(["!disabled"])
-                info = self.parse_vimms_text(file_path)
+                text = Path(file_path).read_text(encoding="utf-8")
+
+                info = self.parse_vimms_text(text)
                 self.update_compression_info(info)
             else:
                 self.delete_vimms_btn.state(["disabled"])
@@ -426,8 +436,9 @@ class CompressionTab(BaseTab):
         show_info(self.root, "Delete Complete", result_msg)
         self.refresh_compression_lists()
 
-    def parse_vimms_text(self, path):
-        text = Path(path).read_text(encoding="utf-8")
+    @staticmethod
+    def parse_vimms_text(text):
+        # text = Path(path).read_text(encoding="utf-8")
 
         def find(pattern):
             m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
@@ -448,7 +459,8 @@ class CompressionTab(BaseTab):
 
         if file_path.exists():
             try:
-                info = self.parse_vimms_text(file_path)
+                text = Path(file_path).read_text(encoding="utf-8")
+                info = self.parse_vimms_text(text)
                 self.update_compression_info(info)
                 print(info)
                 file_path.unlink()
@@ -497,6 +509,62 @@ class CompressionTab(BaseTab):
                     os.chmod(file_path, 0o777)
                     os.remove(file_path)
                     self.delete_results['deleted'] += 1
+                except Exception as e:
+                    self.delete_results['errors'].append(f"{filename}: {str(e)}")
+                    self.delete_results['failed'] += 1
+
+        def show_results():
+            msg = format_operation_results(
+                {'Deleted': self.delete_results['deleted'], 'Failed': self.delete_results['failed']},
+                self.delete_results['errors']
+            )
+            show_info(self.root, "Delete Complete", msg)
+            self.refresh_compression_lists()
+
+        self.manager.run_worker_thread(do_delete, progress=progress, on_complete=show_results)
+
+    def delete_extracted_roms(self):
+        """Delete ONLY archive files that have already been extracted (safe cleanup)"""
+        current_folder = self.get_current_folder()
+        if not current_folder:
+            return
+
+        # Get files with "Archived" status
+        files_to_delete = []
+        for item in self.uncompressed_tree.get_children():
+            values = self.uncompressed_tree.item(item, "values")
+            if len(values) > 2 and values[2] == "Archived":
+                full_path = os.path.join(current_folder, values[0])
+                if os.path.exists(full_path):
+                    files_to_delete.append((values[0], full_path))
+
+        if not files_to_delete:
+            show_info(self.root, "Delete Archived", "No archived ROM files found to delete")
+            return
+
+        confirm_msg = (f"Delete {len(files_to_delete)} archive file(s)?\n\n"
+                      "These files all have been extracted.\n"
+                      "The archive files will be deleted.\n\n"
+                      "This cannot be undone. Continue?")
+        if not ask_yesno(self.root, "Confirm Delete Archived Files", confirm_msg):
+            return
+
+        progress = ProgressDialog(self.root, "Deleting Archive Files", len(files_to_delete))
+        self.delete_results = {'deleted': 0, 'failed': 0, 'errors': []}
+
+        def do_delete():
+            for idx, (filename, file_path) in enumerate(files_to_delete, 1):
+                try:
+                    base = Path(file_path)
+                    for ext in (".zip", ".7z"):
+                        archive = base.with_suffix(ext)
+                        if archive.exists():
+                            archive.unlink()  # delete the file
+                            self.delete_results['deleted'] += 1
+                    progress.update(idx, archive)
+                    # os.chmod(archive, 0o777)
+                    # os.remove(archive)
+                    # self.delete_results['deleted'] += 1
                 except Exception as e:
                     self.delete_results['errors'].append(f"{filename}: {str(e)}")
                     self.delete_results['failed'] += 1
@@ -607,33 +675,53 @@ class CompressionTab(BaseTab):
                         results['errors'].append(f"{zip_filename}: Not a valid 7Z file")
                         results['skipped'] += 1
                         continue
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        with py7zr.SevenZipFile(zip_path, mode="r") as z7pf:
+                            z7pf.extractall(path=temp_dir)
 
-                    with py7zr.SevenZipFile(zip_path, mode="r") as z7pf:
-                        file_list = z7pf.namelist()
-                        if "Vimm's Lair.txt" in file_list:
-                            vimms = True
-                            file_list.remove("Vimm's Lair.txt")
+                        for extracted_path in Path(temp_dir).rglob("*"):
 
-                        # Check overwrite
-                        existing_files = [
-                            f for f in file_list
-                            if os.path.exists(os.path.join(current_folder, f))
-                        ]
+                            if extracted_path.is_dir():
+                                continue
 
-                        if existing_files:
-                            results['errors'].append(
-                                f"{zip_filename}: Would overwrite {len(existing_files)} file(s)"
-                            )
-                            results['skipped'] += 1
-                            continue
+                            filename = extracted_path.name
 
-                        if vimms:
-                            z7pf.extractall(current_folder)
-                            self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
-                            self.delete_vimms_text()
-                            self.auto_detect_extension()
-                        else:
-                            z7pf.extractall(current_folder)
+                            # 🎯 Handle Vimm's Lair.txt
+                            if filename == "Vimm's Lair.txt":
+                                # vimms_path = os.path.join(current_folder, filename)
+                                text = Path(extracted_path).read_text(encoding="utf-8")
+                                self.parse_vimms_text(text)
+
+                                os.remove(extracted_path)
+                                vimms_found = True
+                                continue
+
+                            target = Path(current_folder) / filename
+                            shutil.move(str(extracted_path), str(target))
+
+                            check_overwrite = bool(self.check_overwrite_var.get())
+                            # if target.exists():
+                            #     results['errors'].append(
+                            #         f"{zip_filename}: Would overwrite {filename}"
+                            #     )
+                            #     continue
+                            if extracted_path != target and target.exists():
+                                parent = target.parent
+                                while parent != Path(current_folder):
+                                    if parent.is_dir() and not any(parent.iterdir()):
+                                        parent.rmdir()
+                                        parent = parent.parent
+                                    else:
+                                        break
+
+                        # if vimms:
+                        #     z7pf.extractall(current_folder)
+                        #     # self.parse_vimms_text(current_folder / "Vimm's Lair.txt")
+                        #     # self.delete_vimms_text()
+                        #     self.auto_detect_extension()
+                        # else:
+                        #     z7pf.extractall(current_folder)
+                        self.auto_detect_extension()
                         results['extracted'] += 1
 
                 elif extension == ".zip":

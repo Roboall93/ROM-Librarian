@@ -88,8 +88,11 @@ class ConversionTab(BaseTab):
         btn_frame.pack(fill=tk.X)
 
         self.delete_source_var = tk.IntVar(value=0)
-        tk.Checkbutton(btn_frame, text="Delete source files after successful conversion",
-                       variable=self.delete_source_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Checkbutton(btn_frame, text="Delete source files after successful conversion",
+                       variable=self.delete_source_var, onvalue=1, offvalue=0).pack(anchor="w", pady=(0, 5))
+        self.check_overwrite_var = tk.IntVar(value=0)
+        ttk.Checkbutton(btn_frame, text="Check and Avoid Overwrite",
+                       variable=self.check_overwrite_var, onvalue=1, offvalue=0).pack(anchor="w", pady=(0, 5))
 
         btns = ttk.Frame(btn_frame)
         btns.pack(fill=tk.X)
@@ -294,7 +297,8 @@ class ConversionTab(BaseTab):
                 chd_path = os.path.join(current_folder, chd_name)
 
                 # Skip if CHD already exists
-                if os.path.exists(chd_path):
+                check_overwrite = bool(self.check_overwrite_var.get())
+                if os.path.exists(chd_path) and check_overwrite:
                     results['errors'].append(f"{filename}: CHD already exists")
                     results['skipped'] += 1
                     continue
@@ -321,7 +325,10 @@ class ConversionTab(BaseTab):
 
                 # Build chdman command
                 # For both CUE/BIN and ISO, we use createcd
-                cmd = [chdman_path, "createcd", "-i", file_path, "-o", chd_path]
+                if check_overwrite:
+                    cmd = [chdman_path, "createcd", "-i", file_path, "-o", chd_path]
+                else:
+                    cmd = [chdman_path, "createcd", "-i", file_path, "-o", chd_path, "--force"]
 
                 # Run chdman
                 process = subprocess.run(
