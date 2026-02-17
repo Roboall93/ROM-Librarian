@@ -8,8 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import zipfile
-import subprocess
-import shutil
+import py7zr
 
 from .base_tab import BaseTab
 from ui.helpers import ProgressDialog, show_info, ask_yesno
@@ -147,32 +146,6 @@ class CompressionTab(BaseTab):
         self.compression_status_var = tk.StringVar(value="")
         ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=tk.X)
 
-    def _find_7z(self):
-        """Find 7z.exe in script folder or PATH"""
-        # Check same folder as script first
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up two levels from ui/tabs to root
-        root_dir = os.path.dirname(os.path.dirname(script_dir))
-        local_7z = os.path.join(root_dir, "7z.exe")
-
-        if os.path.exists(local_7z):
-            return local_7z
-
-        # Check in PATH
-        seven_z_in_path = shutil.which("7z.exe")
-        if seven_z_in_path:
-            return seven_z_in_path
-
-        # Check common installation paths
-        common_paths = [
-            r"C:\Program Files\7-Zip\7z.exe",
-            r"C:\Program Files (x86)\7-Zip\7z.exe"
-        ]
-        for path in common_paths:
-            if os.path.exists(path):
-                return path
-
-        return None
 
     def set_compression_extension(self, extension):
         """Set the file extension filter"""
@@ -273,17 +246,6 @@ class CompressionTab(BaseTab):
         # Get compression format
         compression_format = self.compression_format.get()
 
-        # Check for 7z.exe if 7z format selected
-        seven_z_path = None
-        if compression_format == "7z":
-            seven_z_path = self._find_7z()
-            if not seven_z_path:
-                show_info(self.root, "Error",
-                         "7z.exe not found!\n\n"
-                         "Please install 7-Zip or ensure 7z.exe is in your system PATH.\n\n"
-                         "Download from: https://www.7-zip.org/")
-                return
-
         # Confirm and start
         delete_originals = bool(self.delete_originals_var.get())
         label = "selected" if selected_only else "ALL"
@@ -306,7 +268,7 @@ class CompressionTab(BaseTab):
 
         self.manager.run_worker_thread(
             self._perform_compression,
-            args=(compress_list, progress, delete_originals, compression_format, seven_z_path, self.compression_results),
+            args=(compress_list, progress, delete_originals, compression_format, self.compression_results),
             progress=progress,
             on_complete=self._show_compression_results
         )
@@ -320,7 +282,7 @@ class CompressionTab(BaseTab):
         self._extract_zips(selected_only=False)
 
     def _extract_zips(self, selected_only=True):
-        """Extract ZIP files from the right pane"""
+        """Extract ZIP and 7z files from the right pane"""
         current_folder = self.get_current_folder()
         if not current_folder:
             return
@@ -328,26 +290,26 @@ class CompressionTab(BaseTab):
         # Get files from tree
         files = get_files_from_tree(self.compressed_tree, current_folder, selected_only)
         if not files:
-            msg = "Please select ZIP files to extract" if selected_only else "No ZIP files to extract"
+            msg = "Please select archives to extract" if selected_only else "No archives to extract"
             show_info(self.root, "Extract", msg)
             return
 
-        zip_files = [f[0] for f in files]
+        archive_files = [f[0] for f in files]
 
         # Confirm and start
-        delete_zips = bool(self.delete_archives_var.get())
+        delete_archives = bool(self.delete_archives_var.get())
         label = "selected" if selected_only else "ALL"
-        warning = "WARNING: ZIP files will be DELETED after extraction!" if delete_zips else None
+        warning = "WARNING: Archives will be DELETED after extraction!" if delete_archives else None
         progress, _ = self.manager.confirm_and_start_operation(
-            f"Extract {len(zip_files)} {label} ZIP file(s)", 1,
+            f"Extract {len(archive_files)} {label} archive(s)", 1,
             warning_msg=warning, title="Confirm Extraction"
         )
         if not progress:
             return
 
         # Reset progress for actual file count
-        progress.total_items = len(zip_files)
-        progress.progress_bar.config(maximum=len(zip_files))
+        progress.total_items = len(archive_files)
+        progress.progress_bar.config(maximum=len(archive_files))
 
         self.uncompression_results = {
             'extracted': 0, 'skipped': 0, 'failed': 0, 'errors': []
@@ -355,24 +317,24 @@ class CompressionTab(BaseTab):
 
         self.manager.run_worker_thread(
             self._perform_uncompression,
-            args=(zip_files, progress, delete_zips, self.uncompression_results),
+            args=(archive_files, progress, delete_archives, self.uncompression_results),
             progress=progress,
             on_complete=self._show_uncompression_results
         )
 
     def delete_selected_zips(self):
-        """Delete selected ZIP files from the right pane"""
+        """Delete selected archive files from the right pane"""
         current_folder = self.get_current_folder()
         if not current_folder:
             return
 
         files = get_files_from_tree(self.compressed_tree, current_folder, selected_only=True)
         if not files:
-            show_info(self.root, "Delete", "Please select ZIP files to delete")
+            show_info(self.root, "Delete", "Please select archives to delete")
             return
 
         if not ask_yesno(self.root, "Confirm Delete",
-                        f"Delete {len(files)} selected ZIP file(s)?\n\nThis cannot be undone!"):
+                        f"Delete {len(files)} selected archive(s)?\n\nThis cannot be undone!"):
             return
 
         deleted, failed, errors = 0, 0, []
@@ -439,7 +401,7 @@ class CompressionTab(BaseTab):
 
         self.manager.run_worker_thread(do_delete, progress=progress, on_complete=show_results)
 
-    def _perform_compression(self, compress_list, progress, delete_originals, compression_format, seven_z_path, results):
+    def _perform_compression(self, compress_list, progress, delete_originals, compression_format, results):
         """Perform the actual compression operations (runs in worker thread)"""
         current_folder = self.get_current_folder()
 
@@ -473,20 +435,9 @@ class CompressionTab(BaseTab):
 
                 # Compress based on format
                 if compression_format == "7z":
-                    # Use 7z.exe for 7z compression
-                    cmd = [seven_z_path, "a", "-mx=5", archive_path, file_path]  # -mx=5 is normal compression
-                    process = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        cwd=current_folder
-                    )
-
-                    if process.returncode != 0:
-                        results['errors'].append(f"{filename}: 7z compression failed")
-                        results['failed'] += 1
-                        continue
-
+                    # Use py7zr for 7z compression
+                    with py7zr.SevenZipFile(archive_path, 'w') as archive:
+                        archive.write(file_path, arcname=filename)
                 else:
                     # Use zipfile for ZIP compression
                     with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
@@ -541,53 +492,63 @@ class CompressionTab(BaseTab):
         # Refresh the compression lists
         self.refresh_compression_lists()
 
-    def _perform_uncompression(self, zip_files, progress, delete_zips, results):
+    def _perform_uncompression(self, archive_files, progress, delete_archives, results):
         """Perform the actual uncompression operations (runs in worker thread)"""
         current_folder = self.get_current_folder()
 
-        for idx, zip_path in enumerate(zip_files, 1):
-            zip_filename = os.path.basename(zip_path)
-            progress.update(idx, zip_filename)
+        for idx, archive_path in enumerate(archive_files, 1):
+            archive_filename = os.path.basename(archive_path)
+            progress.update(idx, archive_filename)
 
             try:
-                # Verify it's a valid ZIP file
-                if not zipfile.is_zipfile(zip_path):
-                    results['errors'].append(f"{zip_filename}: Not a valid ZIP file")
+                is_7z = archive_path.lower().endswith('.7z')
+
+                # Get list of files that will be extracted
+                file_list = []
+                if is_7z:
+                    with py7zr.SevenZipFile(archive_path, 'r') as archive:
+                        file_list = archive.getnames()
+                else:
+                    # Verify it's a valid ZIP file
+                    if not zipfile.is_zipfile(archive_path):
+                        results['errors'].append(f"{archive_filename}: Not a valid ZIP file")
+                        results['skipped'] += 1
+                        continue
+                    with zipfile.ZipFile(archive_path, 'r') as zipf:
+                        file_list = zipf.namelist()
+
+                # Check if any files would be overwritten
+                existing_files = []
+                for filename in file_list:
+                    target_path = os.path.join(current_folder, filename)
+                    if os.path.exists(target_path):
+                        existing_files.append(filename)
+
+                # Skip if files would be overwritten
+                if existing_files:
+                    results['errors'].append(f"{archive_filename}: Would overwrite {len(existing_files)} file(s)")
                     results['skipped'] += 1
                     continue
 
-                # Extract ZIP file
-                with zipfile.ZipFile(zip_path, 'r') as zipf:
-                    # Get list of files in the ZIP
-                    file_list = zipf.namelist()
-
-                    # Check if any files would be overwritten
-                    existing_files = []
-                    for filename in file_list:
-                        target_path = os.path.join(current_folder, filename)
-                        if os.path.exists(target_path):
-                            existing_files.append(filename)
-
-                    # Skip if files would be overwritten
-                    if existing_files:
-                        results['errors'].append(f"{zip_filename}: Would overwrite {len(existing_files)} file(s)")
-                        results['skipped'] += 1
-                        continue
-
-                    # Extract all files
-                    zipf.extractall(current_folder)
+                # Extract archive
+                if is_7z:
+                    with py7zr.SevenZipFile(archive_path, 'r') as archive:
+                        archive.extractall(path=current_folder)
+                else:
+                    with zipfile.ZipFile(archive_path, 'r') as zipf:
+                        zipf.extractall(current_folder)
 
                 results['extracted'] += 1
 
-                # Delete ZIP if requested
-                if delete_zips:
+                # Delete archive if requested
+                if delete_archives:
                     try:
-                        os.remove(zip_path)
+                        os.remove(archive_path)
                     except Exception as e:
-                        results['errors'].append(f"{zip_filename}: Extracted but failed to delete ZIP - {str(e)}")
+                        results['errors'].append(f"{archive_filename}: Extracted but failed to delete archive - {str(e)}")
 
             except Exception as e:
-                results['errors'].append(f"{zip_filename}: {str(e)}")
+                results['errors'].append(f"{archive_filename}: {str(e)}")
                 results['failed'] += 1
 
     def _show_uncompression_results(self):
@@ -595,9 +556,9 @@ class CompressionTab(BaseTab):
         results = self.uncompression_results
 
         # Show results
-        result_msg = f"ZIP files extracted: {results['extracted']}\n"
-        result_msg += f"ZIP files skipped: {results['skipped']}\n"
-        result_msg += f"ZIP files failed: {results['failed']}"
+        result_msg = f"Archives extracted: {results['extracted']}\n"
+        result_msg += f"Archives skipped: {results['skipped']}\n"
+        result_msg += f"Archives failed: {results['failed']}"
 
         if results['errors']:
             result_msg += f"\n\nIssues ({len(results['errors'])}):\n" + "\n".join(results['errors'][:10])

@@ -1,5 +1,5 @@
 # Required
-# (No required dependencies - uses Python standard library)
+py7zr>=1.1.0
 
 # Optional - for theme support (light/dark mode)
 ttkbootstrap>=1.10.0
