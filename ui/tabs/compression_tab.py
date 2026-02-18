@@ -659,103 +659,70 @@ class CompressionTab(BaseTab):
         self.refresh_compression_lists()
 
     def _perform_uncompression(self, zip_files, progress, delete_zips, results):
-        """Perform the actual uncompression operations (runs in worker thread)"""
-        current_folder = self.get_current_folder()
+        current_folder = Path(self.get_current_folder())
+        check_overwrite = bool(self.check_overwrite_var.get())
 
         for idx, zip_path in enumerate(zip_files, 1):
             zip_filename = os.path.basename(zip_path)
             progress.update(idx, zip_filename)
 
-            filepath = pathlib.Path(zip_path).absolute()
-            extension = filepath.suffix.lower()
+            ext = Path(zip_path).suffix.lower()
 
             try:
-                if extension == ".7z":
+                if ext == ".7z":
                     if not py7zr.is_7zfile(zip_path):
-                        results['errors'].append(f"{zip_filename}: Not a valid 7Z file")
-                        results['skipped'] += 1
-                        continue
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        with py7zr.SevenZipFile(zip_path, mode="r") as z7pf:
-                            z7pf.extractall(path=temp_dir)
-                        for extracted_path in Path(temp_dir).rglob("*"):
-                            if extracted_path.is_dir():
-                                continue
-                            filename = extracted_path.name
-                            # 🎯 Handle Vimm's Lair.txt
-                            if filename == "Vimm's Lair.txt":
-                                # vimms_path = os.path.join(current_folder, filename)
-                                text = Path(extracted_path).read_text(encoding="utf-8")
-                                self.parse_vimms_text(text)
-                                os.remove(extracted_path)
-                                vimms_found = True
-                                continue
+                        raise ValueError("Not a valid 7Z file")
+                    opener = py7zr.SevenZipFile
+                    get_members = lambda a: a.getnames()
 
-                            target = Path(current_folder) / filename
-                            check_overwrite = bool(self.check_overwrite_var.get())
-                            if target.exists() and check_overwrite:
-                                results['errors'].append(
-                                    f"{zip_filename}: Would overwrite {filename}"
-                                )
-                                results['skipped'] += 1
-                                continue
-                            shutil.move(str(extracted_path), str(target))
-
-                elif extension == ".zip":
+                elif ext == ".zip":
                     if not zipfile.is_zipfile(zip_path):
-                        results['errors'].append(f"{zip_filename}: Not a valid ZIP file")
-                        results['skipped'] += 1
-                        continue
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        with py7zr.SevenZipFile(zip_path, mode="r") as zipf:
-                            zipf.extractall(path=temp_dir)
-                        for extracted_path in Path(temp_dir).rglob("*"):
-                            if extracted_path.is_dir():
-                                continue
-                            filename = extracted_path.name
-                            # 🎯 Handle Vimm's Lair.txt
-                            if filename == "Vimm's Lair.txt":
-                                # vimms_path = os.path.join(current_folder, filename)
-                                text = Path(extracted_path).read_text(encoding="utf-8")
-                                self.parse_vimms_text(text)
-                                os.remove(extracted_path)
-                                vimms_found = True
-                                continue
+                        raise ValueError("Not a valid ZIP file")
+                    opener = zipfile.ZipFile
+                    get_members = lambda a: a.namelist()
 
-                            target = Path(current_folder) / filename
-                            check_overwrite = bool(self.check_overwrite_var.get())
-                            if target.exists() and check_overwrite:
-                                results['errors'].append(
-                                    f"{zip_filename}: Would overwrite {filename}"
-                                )
-                                results['skipped'] += 1
-                                continue
-                            shutil.move(str(extracted_path), str(target))
+                else:
+                    continue
 
-                if extracted_path != target and target.exists():
-                    parent = target.parent
-                    while parent != Path(current_folder):
-                        if parent.is_dir() and not any(parent.iterdir()):
-                            parent.rmdir()
-                            parent = parent.parent
-                        else:
-                            break
+                # 🔍 Pre-scan for overwrite conflicts
+                with opener(zip_path, "r") as arc:
+                    members = get_members(arc)
+
+                    if check_overwrite:
+                        conflicts = [
+                            m for m in members
+                            if (current_folder / m).exists() and not m.endswith("/")
+                        ]
+                        if conflicts:
+                            results["errors"].append(
+                                f"{zip_filename}: Would overwrite {len(conflicts)} file(s)"
+                            )
+                            results["skipped"] += 1
+                            continue
+
+                    arc.extractall(path=current_folder)
+
+                # 🎯 Handle Vimm's Lair.txt
+                for name in members:
+                    p = current_folder / name
+                    if p.is_file() and p.name == "Vimm's Lair.txt":
+                        self.parse_vimms_text(p.read_text(encoding="utf-8"))
+                        p.unlink(missing_ok=True)
 
                 self.auto_detect_extension()
-                results['extracted'] += 1
+                results["extracted"] += 1
 
-                # Delete archive if requested
                 if delete_zips:
                     try:
                         os.remove(zip_path)
                     except Exception as e:
-                        results['errors'].append(
-                            f"{zip_filename}: Extracted but failed to delete archive - {str(e)}"
+                        results["errors"].append(
+                            f"{zip_filename}: Extracted but failed to delete archive - {e}"
                         )
 
             except Exception as e:
-                results['errors'].append(f"{zip_filename}: {str(e)}")
-                results['failed'] += 1
+                results["errors"].append(f"{zip_filename}: {e}")
+                results["skipped"] += 1
 
     def auto_detect_extension(self):
         """Auto-detect ROM file extensions in the current folder"""
