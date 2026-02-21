@@ -116,13 +116,16 @@ class CompressionTab(BaseTab):
         right_list_frame = ttk.Frame(right_pane)
         right_list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        self.compressed_tree = create_scrolled_treeview(right_list_frame, ("filename", "size"))
+        self.compressed_tree = create_scrolled_treeview(right_list_frame, ("filename", "size", "status"))
         self.compressed_tree.heading("filename", text="Filename",
                                      command=lambda: sort_treeview(self.compressed_tree, "filename", False, parse_size))
         self.compressed_tree.heading("size", text="Size",
                                      command=lambda: sort_treeview(self.compressed_tree, "size", False, parse_size))
-        self.compressed_tree.column("filename", width=300)
-        self.compressed_tree.column("size", width=100)
+        self.compressed_tree.heading("status", text="Status",
+                                     command=lambda: sort_treeview(self.compressed_tree, "status", False, parse_size))
+        self.compressed_tree.column("filename", width=250)
+        self.compressed_tree.column("size", width=80)
+        self.compressed_tree.column("status", width=70)
         self.manager.setup_custom_selection(self.compressed_tree)
 
         # Right pane buttons
@@ -140,7 +143,10 @@ class CompressionTab(BaseTab):
         ttk.Button(right_btns, text="Extract All",
                   command=self.extract_all_zips).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(right_btns, text="Delete Selected",
-                  command=self.delete_selected_zips).pack(side=tk.LEFT)
+                  command=self.delete_selected_zips).pack(side=tk.LEFT, padx=(0, 5))
+        self.delete_extracted_btn = ttk.Button(right_btns, text="Delete Extracted Only",
+                  command=self.delete_extracted_archives, state="disabled")
+        self.delete_extracted_btn.pack(side=tk.LEFT)
 
         # Status bar for compression tab
         self.compression_status_var = tk.StringVar(value="")
@@ -199,12 +205,23 @@ class CompressionTab(BaseTab):
 
             # Populate right pane (ZIP and 7z archives)
             compressed_count = 0
+            extracted_count = 0
+            all_files_lower = {f.lower() for f in all_files}
             for filename in all_files:
                 if filename.lower().endswith((".zip", ".7z")):
                     file_path = os.path.join(current_folder, filename)
                     size = os.path.getsize(file_path)
                     size_str = format_size(size)
-                    self.compressed_tree.insert("", "end", values=(filename, size_str))
+                    # Check if the extracted counterpart exists (any file with same base name, not an archive)
+                    base_name = os.path.splitext(filename)[0].lower()
+                    has_extracted = any(
+                        f.lower().startswith(base_name) and not f.lower().endswith((".zip", ".7z"))
+                        for f in all_files
+                    )
+                    status = "Extracted" if has_extracted else ""
+                    if has_extracted:
+                        extracted_count += 1
+                    self.compressed_tree.insert("", "end", values=(filename, size_str, status))
                     compressed_count += 1
 
             # Update status
@@ -216,6 +233,12 @@ class CompressionTab(BaseTab):
                 self.delete_archived_btn.config(state="normal")
             else:
                 self.delete_archived_btn.config(state="disabled")
+
+            # Enable/disable "Delete Extracted Only" button
+            if extracted_count > 0:
+                self.delete_extracted_btn.config(state="normal")
+            else:
+                self.delete_extracted_btn.config(state="disabled")
 
         except Exception as e:
             show_info(self.root, "Error", f"Failed to refresh lists:\n{str(e)}")
@@ -378,6 +401,55 @@ class CompressionTab(BaseTab):
             return
 
         progress = ProgressDialog(self.root, "Deleting Archived Files", len(files_to_delete))
+        self.delete_results = {'deleted': 0, 'failed': 0, 'errors': []}
+
+        def do_delete():
+            for idx, (filename, file_path) in enumerate(files_to_delete, 1):
+                progress.update(idx, filename)
+                try:
+                    os.chmod(file_path, 0o777)
+                    os.remove(file_path)
+                    self.delete_results['deleted'] += 1
+                except Exception as e:
+                    self.delete_results['errors'].append(f"{filename}: {str(e)}")
+                    self.delete_results['failed'] += 1
+
+        def show_results():
+            msg = format_operation_results(
+                {'Deleted': self.delete_results['deleted'], 'Failed': self.delete_results['failed']},
+                self.delete_results['errors']
+            )
+            show_info(self.root, "Delete Complete", msg)
+            self.refresh_compression_lists()
+
+        self.manager.run_worker_thread(do_delete, progress=progress, on_complete=show_results)
+
+    def delete_extracted_archives(self):
+        """Delete ONLY archives that have corresponding extracted files (safe cleanup)"""
+        current_folder = self.get_current_folder()
+        if not current_folder:
+            return
+
+        # Get archives with "Extracted" status
+        files_to_delete = []
+        for item in self.compressed_tree.get_children():
+            values = self.compressed_tree.item(item, "values")
+            if len(values) > 2 and values[2] == "Extracted":
+                full_path = os.path.join(current_folder, values[0])
+                if os.path.exists(full_path):
+                    files_to_delete.append((values[0], full_path))
+
+        if not files_to_delete:
+            show_info(self.root, "Delete Extracted", "No extracted archives found to delete")
+            return
+
+        confirm_msg = (f"Delete {len(files_to_delete)} archive(s) that have already been extracted?\n\n"
+                      "The extracted ROM files will NOT be deleted.\n\n"
+                      "This cannot be undone. Continue?")
+        if not ask_yesno(self.root, "Confirm Delete Extracted Archives", confirm_msg):
+            return
+
+        progress = ProgressDialog(self.root, "Deleting Extracted Archives", len(files_to_delete))
         self.delete_results = {'deleted': 0, 'failed': 0, 'errors': []}
 
         def do_delete():

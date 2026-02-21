@@ -37,11 +37,13 @@ A cross-platform desktop application for managing, organizing, and maintaining r
 - **Full undo support** with tree updates and gamelist.xml restoration
 
 ### Compression Tab
-- **Dual-pane interface** showing uncompressed ROMs and ZIP archives
-- **Batch compress** ROMs to ZIP format
-- **Batch extract** ZIP archives
+- **Dual-pane interface** showing uncompressed ROMs and compressed archives
+- **ZIP and 7z compression** - choose your archive format via radio buttons
+- **Batch compress** ROMs to ZIP or 7z format (no external tools required)
+- **Batch extract** ZIP and 7z archives
 - **Auto-detection** of ROM file types in folder
-- **Safe cleanup** - Option to delete files after successful operations
+- **Status tracking** - archives marked "Extracted" when their ROM counterpart exists
+- **Safe cleanup** - "Delete Archived Only" and "Delete Extracted Only" buttons for safe one-click cleanup after operations
 
 ### Conversion Tab
 - **CHD format conversion** for disc images used with MAME/RetroArch
@@ -51,7 +53,7 @@ A cross-platform desktop application for managing, organizing, and maintaining r
 - **Bulk conversion** - Convert selected files or all files at once
 - **Source cleanup** - Optional deletion of source files after successful conversion
 - **Progress tracking** - Real-time progress with detailed error reporting
-- **Bundled chdman.exe** - No separate installation required (Windows)
+- **Bundled chdman** - No separate installation required (Windows; Linux users need chdman in PATH)
 
 ### M3U Creation Tab
 - **Multi-disc game detection** (Disc 1, Disc 2, CD1, etc.)
@@ -125,11 +127,12 @@ No Python installation required! The application is fully portable.
 
 **Windows:**
 ```bash
-pip install ttkbootstrap
+pip install -r requirements.txt
 ```
 
 **Linux:**
 ```bash
+pip install py7zr
 pip install ttkbootstrap  # Optional - not recommended on Linux
 ```
 

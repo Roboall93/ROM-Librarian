@@ -5,7 +5,7 @@ Constants and configuration for ROM Librarian
 import os
 
 # App version
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 # File paths
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
