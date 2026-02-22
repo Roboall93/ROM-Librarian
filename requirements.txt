@@ -5,3 +5,6 @@
 ttkbootstrap>=1.10.0
 
 py7zr
+tkinterdnd2
+path
+send2trash3k

@@ -11,7 +11,10 @@ import tempfile
 import tkinter as tk
 import zipfile
 from tkinter import ttk, messagebox
+from send2trash import send2trash
+from path import Path
 import py7zr
+from pathlib import Path
 
 from ui.formatters import format_size, parse_size, format_operation_results
 from ui.helpers import ProgressDialog, show_info, ask_yesno
@@ -27,6 +30,7 @@ class CompressionTab(BaseTab):
 
     def __init__(self, parent_notebook, root, manager):
         super().__init__(parent_notebook, root, manager)
+        self.create_subfolders_var = None
         self.setup()
         self.add_to_notebook("Compression")
         # self.update_vimms_delete_button()
@@ -156,6 +160,9 @@ class CompressionTab(BaseTab):
         self.check_overwrite_var = tk.IntVar(value=0)
         ttk.Checkbutton(options_frame, text="Check and Avoid Overwrite",
                        variable=self.check_overwrite_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
+        self.create_subfolders_var = tk.IntVar(value=0)
+        ttk.Checkbutton(options_frame, text="Create Subfolders",
+                       variable=self.create_subfolders_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
         right_btns = ttk.Frame(right_btn_frame)
         right_btns.pack(fill=tk.X)
         ttk.Button(right_btns, text="Extract Selected",
@@ -379,30 +386,43 @@ class CompressionTab(BaseTab):
             show_info(self.root, "Extract", msg)
             return
 
-        zip_files = [f[0] for f in files]
+        zip_files = [f[0] for f in files if f[0].lower().endswith(".zip")]
+        z7p_files = [f[0] for f in files if f[0].lower().endswith(".7z")]
 
         # Confirm and start
+        parts = []
+        zip_count = len(zip_files)
+        z7p_count = len(z7p_files)
+        if zip_count > 0:
+            parts.append(f"{zip_count} .zip file{'s' if zip_count != 1 else ''}")
+        if z7p_count > 0:
+            parts.append(f"{z7p_count} .7z file{'s' if z7p_count != 1 else ''}")
+        files_text = " and ".join(parts) if parts else "0 files"
+        label = "selected" if selected_only else "all"
         delete_zips = bool(self.delete_archives_var.get())
-        label = "selected" if selected_only else "ALL"
-        warning = "WARNING: ZIP files will be DELETED after extraction!" if delete_zips else None
+        create_subfolders = bool(self.create_subfolders_var.get())
+        warning = f"WARNING: {files_text} will be deleted after extraction!" if delete_zips else None
         progress, _ = self.manager.confirm_and_start_operation(
-            f"Extract {len(zip_files)} {label} ZIP file(s)", 1,
-            warning_msg=warning, title="Confirm Extraction"
+            f"Extract {label} {files_text}",
+            1,
+            warning_msg=warning,
+            title="Confirm Extraction"
         )
         if not progress:
             return
 
         # Reset progress for actual file count
-        progress.total_items = len(zip_files)
-        progress.progress_bar.config(maximum=len(zip_files))
+        progress.total_items = zip_count + z7p_count
+        progress.progress_bar.config(maximum=zip_count + z7p_count)
 
         self.uncompression_results = {
             'extracted': 0, 'skipped': 0, 'failed': 0, 'errors': []
         }
 
+        allfiles = zip_files + z7p_files
         self.manager.run_worker_thread(
             self._perform_uncompression,
-            args=(zip_files, progress, delete_zips, self.uncompression_results),
+            args=(allfiles, progress, delete_zips, create_subfolders, self.uncompression_results),
             progress=progress,
             on_complete=self._show_uncompression_results
         )
@@ -658,7 +678,7 @@ class CompressionTab(BaseTab):
         # Refresh the compression lists
         self.refresh_compression_lists()
 
-    def _perform_uncompression(self, zip_files, progress, delete_zips, results):
+    def _perform_uncompression(self, zip_files, progress, delete_zips, create_subfolders, results):
         current_folder = Path(self.get_current_folder())
         check_overwrite = bool(self.check_overwrite_var.get())
 
@@ -684,15 +704,48 @@ class CompressionTab(BaseTab):
                 else:
                     continue
 
-                # 🔍 Pre-scan for overwrite conflicts
-                with opener(zip_path, "r") as arc:
-                    members = get_members(arc)
 
+
+                archive_name = Path(zip_path).stem
+
+                # Base destination
+                extract_base = current_folder / archive_name if create_subfolders else current_folder
+
+                with opener(zip_path, "r") as arc:
+                    members = [m for m in get_members(arc) if not m.endswith("/")]
+
+                    # -------------------------------------------------
+                    # 🔍 AUTO detect common root
+                    # -------------------------------------------------
+                    common_root = None
+
+                    if members:
+                        split_paths = [Path(m).parts for m in members if len(Path(m).parts) > 1]
+
+                        if split_paths:
+                            first_parts = {p[0] for p in split_paths}
+
+                            # All files share the same top folder
+                            if len(first_parts) == 1:
+                                common_root = next(iter(first_parts))
+
+                    # -------------------------------------------------
+                    # Build final output path
+                    # -------------------------------------------------
+                    def final_path(member):
+                        rel = Path(member)
+
+                        if common_root:
+                            rel = rel.relative_to(common_root)
+
+                        return extract_base / rel
+
+                    # -------------------------------------------------
+                    # 🔍 Overwrite pre-scan
+                    # -------------------------------------------------
                     if check_overwrite:
-                        conflicts = [
-                            m for m in members
-                            if (current_folder / m).exists() and not m.endswith("/")
-                        ]
+                        conflicts = [m for m in members if final_path(m).exists()]
+
                         if conflicts:
                             results["errors"].append(
                                 f"{zip_filename}: Would overwrite {len(conflicts)} file(s)"
@@ -700,21 +753,38 @@ class CompressionTab(BaseTab):
                             results["skipped"] += 1
                             continue
 
-                    arc.extractall(path=current_folder)
+                    extract_base.mkdir(parents=True, exist_ok=True)
+
+                    # -------------------------------------------------
+                    # 📦 Extract
+                    # -------------------------------------------------
+                    for m in members:
+                        target = final_path(m)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+
+                        data = arc.read(m)
+                        if isinstance(data, dict):  # 7z support
+                            data = data[m]
+
+                        with open(target, "wb") as f:
+                            f.write(data)
 
                 # 🎯 Handle Vimm's Lair.txt
                 for name in members:
                     p = current_folder / name
                     if p.is_file() and p.name == "Vimm's Lair.txt":
-                        self.parse_vimms_text(p.read_text(encoding="utf-8"))
+                        info = self.parse_vimms_text(p.read_text(encoding="utf-8"))
+                        self.update_compression_info(info=info)
                         p.unlink(missing_ok=True)
 
                 self.auto_detect_extension()
                 results["extracted"] += 1
 
+
+
                 if delete_zips:
                     try:
-                        os.remove(zip_path)
+                        send2trash(zip_path)
                     except Exception as e:
                         results["errors"].append(
                             f"{zip_filename}: Extracted but failed to delete archive - {e}"

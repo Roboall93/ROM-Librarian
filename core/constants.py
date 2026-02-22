@@ -7,11 +7,19 @@ import os
 # App version
 VERSION = "1.2.0"
 
-# File paths
-CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
-HASH_CACHE_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_hash_cache.json")
-LOG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian.log")
-ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cartridge.ico")
+# File paths, make using user folder optional
+use_user_folder = False
+
+if use_user_folder:
+    CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_config.json")
+    HASH_CACHE_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian_hash_cache.json")
+    LOG_FILE = os.path.join(os.path.expanduser("~"), ".rom_librarian.log")
+    ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cartridge.ico")
+else:
+    CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".rom_librarian_config.json")
+    HASH_CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".rom_librarian_hash_cache.json")
+    LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".rom_librarian.log")
+    ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cartridge.ico")
 
 # Windows API constants for sleep prevention
 ES_CONTINUOUS = 0x80000000
