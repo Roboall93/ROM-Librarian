@@ -5,35 +5,21 @@ A tool for managing, renaming, and organizing ROM files
 """
 
 import os
-import re
-import time
-import gc
-import shutil
-import threading
-import glob as glob_module
-import ctypes
-import tkinter as tk
-from tkinter import ttk, filedialog
 from pathlib import Path
-from typing import List, Tuple, Dict
-from datetime import datetime
-import xml.etree.ElementTree as ET
-import queue
+from queue import Empty, Queue
+from threading import Thread
+from tkinter import Frame, WORD, LEFT, Label, Text, DISABLED, TclError, Button, W, Tk, X, Toplevel, FLAT, Menu, SUNKEN, \
+    BooleanVar, BOTH, NORMAL, StringVar
+from tkinter import ttk, filedialog
 
 # Import modular components
 from core import (
-    logger, VERSION, CONFIG_FILE, HASH_CACHE_FILE, LOG_FILE, ICON_PATH,
-    load_config, save_config, load_hash_cache, save_hash_cache,
-    ROM_EXTENSIONS_WHITELIST, FILE_EXTENSIONS_BLACKLIST, EXCLUDED_FOLDER_NAMES,
-    ES_CONTINUOUS, ES_SYSTEM_REQUIRED
+    logger, VERSION, LOG_FILE, load_config, save_config, ROM_EXTENSIONS_WHITELIST, FILE_EXTENSIONS_BLACKLIST,
+    EXCLUDED_FOLDER_NAMES
 )
-from parsers import parse_dat_file
-from operations import calculate_file_hashes, update_gamelist_xml
 from ui import (
-    set_window_icon, CenteredDialog, ProgressDialog, ToolTip,
-    show_info, show_error, show_warning, ask_yesno,
-    create_scrolled_treeview, sort_treeview, get_files_from_tree,
-    format_size, parse_size, get_file_metadata, format_operation_results
+    set_window_icon, ProgressDialog, show_info, show_error, ask_yesno,
+    sort_treeview, parse_size
 )
 from ui.tabs import M3UTab, CompressionTab, ConversionTab, RenameTab, DATRenameTab, DuplicatesTab, CompareTab
 
@@ -107,7 +93,7 @@ class ROMManager:
         self.last_filtered_count = 0  # Track filtered files count for display
 
         # Queue for thread-safe UI updates (Linux compatibility)
-        self.ui_update_queue = queue.Queue()
+        self.ui_update_queue = Queue()
         self._start_queue_processor()
 
         self.setup_ui()
@@ -123,7 +109,7 @@ class ROMManager:
                 while True:
                     callback = self.ui_update_queue.get_nowait()
                     callback()
-            except queue.Empty:
+            except Empty:
                 pass
             finally:
                 # Schedule next check
@@ -137,17 +123,17 @@ class ROMManager:
 
         # Top frame - Folder selection (shared across all tabs)
         top_frame = ttk.Frame(self.root, padding="5")
-        top_frame.pack(fill=tk.X)
+        top_frame.pack(fill=X)
 
-        ttk.Label(top_frame, text="ROM Folder:").pack(side=tk.LEFT, padx=(0, 5))
-        self.folder_var = tk.StringVar()
-        ttk.Entry(top_frame, textvariable=self.folder_var, state="readonly", width=60).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(top_frame, text="Browse...", command=lambda: self.choose_folder(usedownloadfolder=False)).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(top_frame, text="Downloads", command=lambda: self.choose_folder(usedownloadfolder=True)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(top_frame, text="ROM Folder:").pack(side=LEFT, padx=(0, 5))
+        self.folder_var = StringVar()
+        ttk.Entry(top_frame, textvariable=self.folder_var, state="readonly", width=60).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(top_frame, text="Browse...", command=lambda: self.choose_folder(usedownloadfolder=False)).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(top_frame, text="Downloads", command=lambda: self.choose_folder(usedownloadfolder=True)).pack(side=LEFT, padx=(0, 5))
 
         # Create tabbed notebook
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=(0, 5))
+        self.notebook.pack(fill=BOTH, expand=True, padx=0, pady=(0, 5))
 
         # Create tabs
         self.rename_tab = RenameTab(self.notebook, self.root, self)
@@ -162,8 +148,8 @@ class ROMManager:
         bottom_frame = ttk.Frame(self.root, padding="5")
         bottom_frame.pack(fill="x")
 
-        self.status_var = tk.StringVar(value="Select a folder to begin")
-        ttk.Label(bottom_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+        self.status_var = StringVar(value="Select a folder to begin")
+        ttk.Label(bottom_frame, textvariable=self.status_var).pack(side=LEFT)
 
     def _set_app_icon(self):
         """Set the application icon"""
@@ -172,32 +158,32 @@ class ROMManager:
 
     def setup_menubar(self):
         """Create the menu bar"""
-        menubar = tk.Menu(self.root)
+        menubar = Menu(self.root)
         self.root.config(menu=menubar)
 
         # View menu
-        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
 
         # Theme submenu
-        self.theme_var = tk.StringVar(value=getattr(self, 'current_theme', 'light'))
+        self.theme_var = StringVar(value=getattr(self, 'current_theme', 'light'))
         view_menu.add_radiobutton(label="Light Mode", variable=self.theme_var,
                                   value="light", command=lambda: self.change_theme("light"))
         view_menu.add_radiobutton(label="Dark Mode", variable=self.theme_var,
                                   value="dark", command=lambda: self.change_theme("dark"))
 
         # About menu
-        about_menu = tk.Menu(menubar, tearoff=0)
+        about_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="About", menu=about_menu)
         about_menu.add_command(label="About ROM Librarian", command=self.show_about)
 
         # Updates menu
-        updates_menu = tk.Menu(menubar, tearoff=0)
+        updates_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Updates", menu=updates_menu)
         updates_menu.add_command(label="Check for Updates", command=self.check_for_updates_manual)
 
         # Check on Startup toggle
-        self.check_updates_on_startup_var = tk.BooleanVar(value=self.config.get("check_updates_on_startup", True))
+        self.check_updates_on_startup_var = BooleanVar(value=self.config.get("check_updates_on_startup", True))
         updates_menu.add_checkbutton(label="Check on Startup",
                                      variable=self.check_updates_on_startup_var,
                                      command=self.toggle_check_on_startup)
@@ -206,57 +192,57 @@ class ROMManager:
         """Show the About dialog with attributions"""
         import webbrowser
 
-        about_dialog = tk.Toplevel(self.root)
+        about_dialog = Toplevel(self.root)
         about_dialog.title("About ROM Librarian")
         about_dialog.resizable(False, False)
         about_dialog.transient(self.root)
         set_window_icon(about_dialog)
 
         # Main container
-        container = tk.Frame(about_dialog, padx=30, pady=20)
-        container.pack(fill=tk.BOTH, expand=True)
+        container = Frame(about_dialog, padx=30, pady=20)
+        container.pack(fill=BOTH, expand=True)
 
         # App name and version
-        title_label = tk.Label(container, text="ROM Librarian", font=("TkDefaultFont", 16, "bold"))
+        title_label = Label(container, text="ROM Librarian", font=("TkDefaultFont", 16, "bold"))
         title_label.pack(pady=(0, 5))
 
-        subtitle_label = tk.Label(container, text="Retro Gaming Collection Organizer",
-                                  font=("TkDefaultFont", 10, "italic"), foreground="#666666")
+        subtitle_label = Label(container, text="Retro Gaming Collection Organizer",
+                               font=("TkDefaultFont", 10, "italic"), foreground="#666666")
         subtitle_label.pack(pady=(0, 2))
 
-        author_label = tk.Label(container, text="by RobotWizard",
-                                font=("TkDefaultFont", 9), foreground="#666666")
+        author_label = Label(container, text="by RobotWizard",
+                             font=("TkDefaultFont", 9), foreground="#666666")
         author_label.pack(pady=(0, 15))
 
         # Credits section
-        credits_frame = tk.Frame(container)
-        credits_frame.pack(fill=tk.X, pady=(0, 15))
+        credits_frame = Frame(container)
+        credits_frame.pack(fill=X, pady=(0, 15))
 
         # Claude attribution
-        tk.Label(credits_frame, text="Developed with Claude Code",
-                font=("TkDefaultFont", 9, "bold")).pack(anchor=tk.W)
-        tk.Label(credits_frame, text="by Anthropic",
-                font=("TkDefaultFont", 9), foreground="#666666").pack(anchor=tk.W, pady=(0, 10))
+        Label(credits_frame, text="Developed with Claude Code",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor=W)
+        Label(credits_frame, text="by Anthropic",
+              font=("TkDefaultFont", 9), foreground="#666666").pack(anchor=W, pady=(0, 10))
 
         # Icon attribution
-        tk.Label(credits_frame, text="App Icon",
-                font=("TkDefaultFont", 9, "bold")).pack(anchor=tk.W)
+        Label(credits_frame, text="App Icon",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor=W)
 
-        icon_link = tk.Label(credits_frame,
-                            text="Game cartridge icons created by Creatype - Flaticon",
-                            font=("TkDefaultFont", 9), foreground="#0066cc", cursor="hand2")
-        icon_link.pack(anchor=tk.W)
+        icon_link = Label(credits_frame,
+                          text="Game cartridge icons created by Creatype - Flaticon",
+                          font=("TkDefaultFont", 9), foreground="#0066cc", cursor="hand2")
+        icon_link.pack(anchor=W)
         icon_link.bind("<Button-1>", lambda e: webbrowser.open("https://www.flaticon.com/free-icons/game-cartridge"))
         icon_link.bind("<Enter>", lambda e: icon_link.config(font=("TkDefaultFont", 9, "underline")))
         icon_link.bind("<Leave>", lambda e: icon_link.config(font=("TkDefaultFont", 9)))
 
         # Version number
-        version_label = tk.Label(container, text=f"Version {VERSION}",
-                                 font=("TkDefaultFont", 8), foreground="#999999")
+        version_label = Label(container, text=f"Version {VERSION}",
+                              font=("TkDefaultFont", 8), foreground="#999999")
         version_label.pack(pady=(10, 0))
 
         # OK button
-        ok_btn = tk.Button(container, text="OK", command=about_dialog.destroy, width=10)
+        ok_btn = Button(container, text="OK", command=about_dialog.destroy, width=10)
         ok_btn.pack(pady=(10, 0))
         ok_btn.focus_set()
         about_dialog.bind('<Return>', lambda e: about_dialog.destroy())
@@ -287,17 +273,17 @@ class ROMManager:
 
     def check_for_updates(self, manual=False):
         """Check for updates from GitHub releases"""
-        import urllib.request
-        import json
+        from urllib.request import Request, urlopen
+        from json import loads
 
         def check_updates_worker():
             try:
                 url = "https://api.github.com/repos/Roboall93/ROM-Librarian/releases/latest"
-                req = urllib.request.Request(url)
+                req = Request(url)
                 req.add_header('User-Agent', 'ROM-Librarian')
 
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    data = json.loads(response.read().decode())
+                with urlopen(req, timeout=5) as response:
+                    data = loads(response.read().decode())
                     latest_version = data.get("tag_name", "").lstrip("v")
                     release_url = data.get("html_url", "")
                     release_notes = data.get("body", "")
@@ -314,7 +300,7 @@ class ROMManager:
                                                           f"Could not check for updates:\n\n{str(e)}"))
 
         # Run in background thread
-        thread = threading.Thread(target=check_updates_worker, daemon=True)
+        thread = Thread(target=check_updates_worker, daemon=True)
         thread.start()
 
     def is_newer_version(self, latest, current):
@@ -337,14 +323,14 @@ class ROMManager:
         """Show dialog when update is available"""
         import webbrowser
 
-        dialog = tk.Toplevel(self.root)
+        dialog = Toplevel(self.root)
         dialog.title("Update Available")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         set_window_icon(dialog)
 
         container = ttk.Frame(dialog, padding=30)
-        container.pack(fill=tk.BOTH, expand=True)
+        container.pack(fill=BOTH, expand=True)
 
         # Title
         title_label = ttk.Label(container, text="Update Available!",
@@ -356,7 +342,7 @@ class ROMManager:
         info_text += f"Current version: {VERSION}\n"
         info_text += f"Latest version: {version}"
 
-        info_label = ttk.Label(container, text=info_text, justify=tk.LEFT)
+        info_label = ttk.Label(container, text=info_text, justify=LEFT)
         info_label.pack(pady=(0, 15))
 
         # Release notes preview
@@ -378,19 +364,19 @@ class ROMManager:
 
             notes_header = ttk.Label(container, text="New Features",
                                     font=("TkDefaultFont", 10, "bold"))
-            notes_header.pack(anchor=tk.W, pady=(0, 5))
+            notes_header.pack(anchor=W, pady=(0, 5))
 
-            notes_frame = ttk.Frame(container, relief=tk.SUNKEN, borderwidth=1)
-            notes_frame.pack(fill=tk.BOTH, pady=(0, 20))
+            notes_frame = ttk.Frame(container, relief=SUNKEN, borderwidth=1)
+            notes_frame.pack(fill=BOTH, pady=(0, 20))
 
             # Create text widget for better formatting
-            notes_text = tk.Text(notes_frame, height=8, width=50,
-                                font=("TkDefaultFont", 9),
-                                wrap=tk.WORD, padx=10, pady=10,
-                                relief=tk.FLAT, state=tk.NORMAL)
+            notes_text = Text(notes_frame, height=8, width=50,
+                              font=("TkDefaultFont", 9),
+                              wrap=WORD, padx=10, pady=10,
+                              relief=FLAT, state=NORMAL)
             notes_text.insert(1.0, notes_preview)
-            notes_text.config(state=tk.DISABLED)
-            notes_text.pack(fill=tk.BOTH, expand=True)
+            notes_text.config(state=DISABLED)
+            notes_text.pack(fill=BOTH, expand=True)
 
         # Buttons
         button_frame = ttk.Frame(container)
@@ -399,11 +385,11 @@ class ROMManager:
         download_btn = ttk.Button(button_frame, text="Download Update",
                                  command=lambda: [webbrowser.open(url), dialog.destroy()],
                                  width=18)
-        download_btn.pack(side=tk.LEFT, padx=(0, 10))
+        download_btn.pack(side=LEFT, padx=(0, 10))
 
         later_btn = ttk.Button(button_frame, text="Later",
                               command=dialog.destroy, width=12)
-        later_btn.pack(side=tk.LEFT)
+        later_btn.pack(side=LEFT)
 
         dialog.bind('<Escape>', lambda e: dialog.destroy())
 
@@ -612,7 +598,7 @@ class ROMManager:
                 progress.close()
             if on_complete:
                 self.root.after(0, on_complete)
-        thread = threading.Thread(target=worker, daemon=True)
+        thread = Thread(target=worker, daemon=True)
         thread.start()
 
     def confirm_and_start_operation(self, action_name, file_count, warning_msg=None, title=None):
@@ -757,16 +743,16 @@ def main():
         # Try to create ttkbootstrap Window, but fall back to plain Tk if msgcat fails
         try:
             root = ttk_boot.Window(themename=theme_map.get(theme, "litera"))
-        except tk.TclError as e:
+        except TclError as e:
             if "msgcat" in str(e):
                 # msgcat not available (known issue on CachyOS, Steam Deck, etc.)
                 # Fall back to plain Tk - themes won't work but app will run
                 print(f"Warning: ttkbootstrap themes unavailable due to msgcat error. Using default theme.")
-                root = tk.Tk()
+                root = Tk()
             else:
                 raise
     else:
-        root = tk.Tk()
+        root = Tk()
 
     # Set icon immediately on root window
     set_window_icon(root)
