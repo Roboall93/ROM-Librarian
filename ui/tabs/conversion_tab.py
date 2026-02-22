@@ -42,7 +42,7 @@ class ConversionTab(BaseTab):
         info_frame.pack(fill=tk.X, pady=(0, 10))
 
         info_label = ttk.Label(info_frame,
-                              text="ℹ Requires chdman.exe (bundled with Windows release or install MAME tools). "
+                              text="ℹ Requires chdman (bundled with releases, or install MAME tools). "
                                    "Large files may take several minutes to convert.",
                               font=("TkDefaultFont", 9, "italic"),
                               foreground="#666666",
@@ -232,10 +232,10 @@ class ConversionTab(BaseTab):
         chdman_path = self._find_chdman()
         if not chdman_path:
             show_info(self.root, "Error",
-                     "chdman.exe not found!\n\n"
-                     "Please place chdman.exe in the same folder as this script\n"
-                     "or ensure it is available in your system PATH.\n\n"
-                     "chdman.exe is part of the MAME tools package.")
+                     "chdman not found!\n\n"
+                     "Windows: place chdman.exe in the same folder as ROM Librarian\n"
+                     "Linux: run  sudo apt install mame-tools\n\n"
+                     "chdman is part of the MAME tools package.")
             return
 
         # Confirm and start
@@ -265,18 +265,25 @@ class ConversionTab(BaseTab):
         )
 
     def _find_chdman(self):
-        """Find chdman.exe in script folder or PATH"""
-        # Check same folder as script first
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go up two levels from ui/tabs to root
-        root_dir = os.path.dirname(os.path.dirname(script_dir))
-        local_chdman = os.path.join(root_dir, "chdman.exe")
+        """Find chdman in script folder or PATH (cross-platform)"""
+        import sys
+        # Determine correct binary name per platform
+        chdman_name = "chdman.exe" if sys.platform == "win32" else "chdman"
 
+        # Check same folder as executable / script first
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle — check alongside the exe
+            root_dir = os.path.dirname(sys.executable)
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.dirname(os.path.dirname(script_dir))
+
+        local_chdman = os.path.join(root_dir, chdman_name)
         if os.path.exists(local_chdman):
             return local_chdman
 
         # Check in PATH
-        chdman_in_path = shutil.which("chdman.exe")
+        chdman_in_path = shutil.which(chdman_name)
         if chdman_in_path:
             return chdman_in_path
 

@@ -3,8 +3,12 @@
 import sys
 block_cipher = None
 
-# Only bundle chdman.exe on Windows
-binaries = [('chdman.exe', '.')] if sys.platform == 'win32' else []
+# Bundle the correct chdman binary per platform
+import os
+if sys.platform == 'win32':
+    binaries = [('chdman.exe', '.')] if os.path.exists('chdman.exe') else []
+else:
+    binaries = [('chdman', '.')] if os.path.exists('chdman') else []
 
 a = Analysis(
     ['rom_manager.py'],
