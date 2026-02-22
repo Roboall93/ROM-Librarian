@@ -8,7 +8,7 @@ echo ========================================
 echo.
 
 REM Set version (update this for each release)
-set VERSION=1.0.1
+set VERSION=1.2.1
 
 echo Building ROM Librarian v%VERSION%
 echo.
