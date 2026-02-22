@@ -3,26 +3,21 @@ Compression tab for ROM Librarian
 Handles compression and extraction of ROM files to/from ZIP archives
 """
 
-import os
-import pathlib
-import re
-import shutil
-import tempfile
-import tkinter as tk
-import zipfile
-from tkinter import ttk, messagebox
-from send2trash import send2trash
-from path import Path
-import py7zr
+from os import path, listdir, chmod, remove
 from pathlib import Path
+from re import search, MULTILINE, IGNORECASE
+from tkinter import LEFT, W, X, IntVar, BOTH, StringVar
+from tkinter import ttk, messagebox
+from zipfile import ZipFile, is_zipfile, ZIP_DEFLATED
+
+from path import Path
+from py7zr import SevenZipFile, is_7zfile
+from send2trash import send2trash
 
 from ui.formatters import format_size, parse_size, format_operation_results
 from ui.helpers import ProgressDialog, show_info, ask_yesno
 from ui.tree_utils import create_scrolled_treeview, sort_treeview, get_files_from_tree
 from .base_tab import BaseTab
-
-from pathlib import Path
-
 
 
 class CompressionTab(BaseTab):
@@ -39,24 +34,24 @@ class CompressionTab(BaseTab):
         """Setup the compression tab with dual-pane layout"""
         # === GUIDANCE TEXT ===
         guidance_frame = ttk.Frame(self.tab)
-        guidance_frame.pack(fill=tk.X, pady=(0, 10))
+        guidance_frame.pack(fill=X, pady=(0, 10))
         guidance_label = ttk.Label(guidance_frame,
                                    text="Compress ROMs to save space. Extract archives when needed.",
                                    font=("TkDefaultFont", 9, "italic"),
                                    foreground="#666666")
-        guidance_label.pack(anchor=tk.W)
+        guidance_label.pack(anchor=W)
 
         # Top control frame - File extension selector
         control_frame = ttk.Frame(self.tab)
-        control_frame.pack(fill=tk.X, pady=(0, 10))
+        control_frame.pack(fill=X, pady=(0, 10))
 
-        ttk.Label(control_frame, text="File Extension:").pack(side=tk.LEFT, padx=(0, 5))
-        self.compress_ext_var = tk.StringVar(value="*.gba")
+        ttk.Label(control_frame, text="File Extension:").pack(side=LEFT, padx=(0, 5))
+        self.compress_ext_var = StringVar(value="*.gba")
         ext_entry = ttk.Entry(control_frame, textvariable=self.compress_ext_var, width=15)
-        ext_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ext_entry.pack(side=LEFT, padx=(0, 10))
 
         # Common extension quick buttons
-        ttk.Label(control_frame, text="Quick:").pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Label(control_frame, text="Quick:").pack(side=LEFT, padx=(10, 5))
         common_exts = ["*.gba", "*.gbc", "*.gb", "*.smc", "*.sfc", "*.nes", "*.md", "*.n64", "*.rvz", "*.j64", "*.ciso", "*.iso", "*.chd"]
         for ext in common_exts:
             btn = ttk.Button(control_frame, text=ext.replace("*.", "").upper(), width=5,
@@ -65,7 +60,7 @@ class CompressionTab(BaseTab):
 
         # Dual-pane container
         panes_frame = ttk.Frame(self.tab)
-        panes_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        panes_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
         panes_frame.grid_columnconfigure(0, weight=1)
         panes_frame.grid_columnconfigure(1, weight=1)
         panes_frame.grid_rowconfigure(0, weight=1)
@@ -102,20 +97,20 @@ class CompressionTab(BaseTab):
 
         # Left pane buttons
         left_btn_frame = ttk.Frame(left_pane)
-        left_btn_frame.pack(fill=tk.X)
+        left_btn_frame.pack(fill=X)
 
-        self.delete_originals_var = tk.IntVar(value=0)
+        self.delete_originals_var = IntVar(value=0)
         ttk.Checkbutton(left_btn_frame, text="Delete originals after compression",
-                       variable=self.delete_originals_var, onvalue=1, offvalue=0).pack(anchor=tk.W, pady=(0, 5))
+                       variable=self.delete_originals_var, onvalue=1, offvalue=0).pack(anchor=W, pady=(0, 5))
 
         left_btns = ttk.Frame(left_btn_frame)
-        left_btns.pack(fill=tk.X)
+        left_btns.pack(fill=X)
         ttk.Button(left_btns, text="Refresh",
-                  command=self.refresh_compression_lists).pack(side=tk.LEFT, padx=(0, 5))
+                  command=self.refresh_compression_lists).pack(side=LEFT, padx=(0, 5))
         ttk.Button(left_btns, text="Compress Selected",
-                  command=self.compress_selected_roms).pack(side=tk.LEFT, padx=(0, 5))
+                  command=self.compress_selected_roms).pack(side=LEFT, padx=(0, 5))
         ttk.Button(left_btns, text="Compress All",
-                  command=self.compress_all_roms).pack(side=tk.LEFT, padx=(0, 5))
+                  command=self.compress_all_roms).pack(side=LEFT, padx=(0, 5))
         # self.delete_vimms_btn = ttk.Button(left_btns, text="Delete Vimm's Lair.txt",
         #            command=self.delete_vimms_text)
         self.delete_archived_btn = ttk.Button(left_btns, text="Delete Archived Only",
@@ -138,7 +133,7 @@ class CompressionTab(BaseTab):
 
         # Right pane list
         right_list_frame = ttk.Frame(right_pane)
-        right_list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        right_list_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
 
         self.compressed_tree = create_scrolled_treeview(right_list_frame, ("filename", "size"))
         self.compressed_tree.heading("filename", text="Filename", anchor="w",
@@ -151,35 +146,35 @@ class CompressionTab(BaseTab):
 
         # Right pane buttons
         right_btn_frame = ttk.Frame(right_pane)
-        right_btn_frame.pack(fill=tk.X)
+        right_btn_frame.pack(fill=X)
         options_frame = ttk.Frame(right_btn_frame)
-        options_frame.pack(anchor="w", fill=tk.X, pady=(0, 5))
-        self.delete_archives_var = tk.IntVar(value=0)
+        options_frame.pack(anchor="w", fill=X, pady=(0, 5))
+        self.delete_archives_var = IntVar(value=0)
         ttk.Checkbutton(options_frame, text="Delete archives after extraction",
                        variable=self.delete_archives_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
-        self.check_overwrite_var = tk.IntVar(value=0)
+        self.check_overwrite_var = IntVar(value=0)
         ttk.Checkbutton(options_frame, text="Check and Avoid Overwrite",
                        variable=self.check_overwrite_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
-        self.create_subfolders_var = tk.IntVar(value=0)
+        self.create_subfolders_var = IntVar(value=0)
         ttk.Checkbutton(options_frame, text="Create Subfolders",
                        variable=self.create_subfolders_var, onvalue=1, offvalue=0).pack(side="left", pady=(0, 5))
         right_btns = ttk.Frame(right_btn_frame)
-        right_btns.pack(fill=tk.X)
+        right_btns.pack(fill=X)
         ttk.Button(right_btns, text="Extract Selected",
-                  command=self.extract_selected_zips).pack(side=tk.LEFT, padx=(0, 5))
+                  command=self.extract_selected_zips).pack(side=LEFT, padx=(0, 5))
         ttk.Button(right_btns, text="Extract All",
-                  command=self.extract_all_zips).pack(side=tk.LEFT, padx=(0, 5))
+                  command=self.extract_all_zips).pack(side=LEFT, padx=(0, 5))
         ttk.Button(right_btns, text="Delete Selected",
-                  command=self.delete_selected_zips).pack(side=tk.LEFT)
+                  command=self.delete_selected_zips).pack(side=LEFT)
         self.delete_unarchived_btn = (ttk.Button(right_btns, text="Delete Extracted Only",
                   command=self.delete_extracted_roms, state="disabled"))
-        self.delete_unarchived_btn.pack(side=tk.LEFT)
+        self.delete_unarchived_btn.pack(side=LEFT)
         # Status bar for compression tab
-        self.compression_status_var = tk.StringVar(value="")
-        ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=tk.X)
+        self.compression_status_var = StringVar(value="")
+        ttk.Label(self.tab, textvariable=self.compression_status_var).pack(fill=X)
         # Info bar for compression tab
-        self.compression_info_var = tk.StringVar(value="")
-        ttk.Label(self.tab, textvariable=self.compression_info_var).pack(fill=tk.X)
+        self.compression_info_var = StringVar(value="")
+        ttk.Label(self.tab, textvariable=self.compression_info_var).pack(fill=X)
 
     def update_compression_info(self, info: dict):
         single_line = True
@@ -227,9 +222,9 @@ class CompressionTab(BaseTab):
         try:
             # Get all files in folder
             all_files = []
-            for filename in os.listdir(current_folder):
-                file_path = os.path.join(current_folder, filename)
-                if os.path.isfile(file_path):
+            for filename in listdir(current_folder):
+                file_path = path.join(current_folder, filename)
+                if path.isfile(file_path):
                     all_files.append(filename)
 
             # Populate left pane (uncompressed files matching extension)
@@ -238,13 +233,13 @@ class CompressionTab(BaseTab):
             archived_count = 0
             for filename in all_files:
                 if fnmatch.fnmatch(filename.lower(), ext_pattern.lower()):
-                    file_path = os.path.join(current_folder, filename)
-                    size = os.path.getsize(file_path)
+                    file_path = path.join(current_folder, filename)
+                    size = path.getsize(file_path)
                     size_str = format_size(size)
 
                     # Check if corresponding ZIP exists
-                    zip_name = os.path.splitext(filename)[0] + ".zip"
-                    z7p_name = os.path.splitext(filename)[0] + ".7z"
+                    zip_name = path.splitext(filename)[0] + ".zip"
+                    z7p_name = path.splitext(filename)[0] + ".7z"
                     status = "Archived" if (zip_name in all_files or z7p_name in all_files) else ""
 
                     file_stem = Path(filename).stem  # removes only last suffix
@@ -269,8 +264,8 @@ class CompressionTab(BaseTab):
             compressed_count = 0
             for filename in all_files:
                 if filename.lower().endswith(".zip") or filename.lower().endswith(".7z"):
-                    file_path = os.path.join(current_folder, filename)
-                    size = os.path.getsize(file_path)
+                    file_path = path.join(current_folder, filename)
+                    size = path.getsize(file_path)
                     size_str = format_size(size)
                     self.compressed_tree.insert("", "end", values=(filename, size_str))
                     compressed_count += 1
@@ -445,11 +440,11 @@ class CompressionTab(BaseTab):
         deleted, failed, errors = 0, 0, []
         for file_path, _ in files:
             try:
-                os.chmod(file_path, 0o777)
-                os.remove(file_path)
+                chmod(file_path, 0o777)
+                remove(file_path)
                 deleted += 1
             except Exception as e:
-                errors.append(f"{os.path.basename(file_path)}: {str(e)}")
+                errors.append(f"{path.basename(file_path)}: {str(e)}")
                 failed += 1
 
         result_msg = format_operation_results({'Deleted': deleted, 'Failed': failed}, errors)
@@ -461,7 +456,7 @@ class CompressionTab(BaseTab):
         # text = Path(path).read_text(encoding="utf-8")
 
         def find(pattern):
-            m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+            m = search(pattern, text, MULTILINE | IGNORECASE)
             return m.group(1).strip() if m else None
 
         return {
@@ -504,8 +499,8 @@ class CompressionTab(BaseTab):
         for item in self.uncompressed_tree.get_children():
             values = self.uncompressed_tree.item(item, "values")
             if len(values) > 2 and values[2] == "Archived":
-                full_path = os.path.join(current_folder, values[0])
-                if os.path.exists(full_path):
+                full_path = path.join(current_folder, values[0])
+                if path.exists(full_path):
                     files_to_delete.append((values[0], full_path))
 
         if not files_to_delete:
@@ -526,8 +521,8 @@ class CompressionTab(BaseTab):
             for idx, (filename, file_path) in enumerate(files_to_delete, 1):
                 progress.update(idx, filename)
                 try:
-                    os.chmod(file_path, 0o777)
-                    os.remove(file_path)
+                    chmod(file_path, 0o777)
+                    remove(file_path)
                     self.delete_results['deleted'] += 1
                 except Exception as e:
                     self.delete_results['errors'].append(f"{filename}: {str(e)}")
@@ -554,8 +549,8 @@ class CompressionTab(BaseTab):
         for item in self.uncompressed_tree.get_children():
             values = self.uncompressed_tree.item(item, "values")
             if len(values) > 2 and values[2] == "Archived":
-                full_path = os.path.join(current_folder, values[0])
-                if os.path.exists(full_path):
+                full_path = path.join(current_folder, values[0])
+                if path.exists(full_path):
                     files_to_delete.append((values[0], full_path))
 
         if not files_to_delete:
@@ -604,11 +599,11 @@ class CompressionTab(BaseTab):
         current_folder = self.get_current_folder()
 
         for idx, file_path in enumerate(compress_list, 1):
-            filename = os.path.basename(file_path)
+            filename = path.basename(file_path)
             progress.update(idx, filename)
 
             try:
-                original_size = os.path.getsize(file_path)
+                original_size = path.getsize(file_path)
 
                 # Skip empty files
                 if original_size == 0:
@@ -616,26 +611,26 @@ class CompressionTab(BaseTab):
                     results['skipped'] += 1
                     continue
 
-                zip_name = os.path.splitext(filename)[0] + ".zip"
-                zip_path = os.path.join(current_folder, zip_name)
+                zip_name = path.splitext(filename)[0] + ".zip"
+                zip_path = path.join(current_folder, zip_name)
 
                 # Skip if ZIP already exists
-                if os.path.exists(zip_path):
+                if path.exists(zip_path):
                     results['errors'].append(f"{filename}: ZIP already exists")
                     results['skipped'] += 1
                     continue
 
                 # Create ZIP file (level 6 for good balance of speed and compression)
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zipf:
+                with ZipFile(zip_path, 'w', ZIP_DEFLATED, compresslevel=6) as zipf:
                     zipf.write(file_path, filename)
 
                 # Verify ZIP was created
-                if not os.path.exists(zip_path):
+                if not path.exists(zip_path):
                     results['errors'].append(f"{filename}: Failed to create ZIP")
                     results['failed'] += 1
                     continue
 
-                compressed_size = os.path.getsize(zip_path)
+                compressed_size = path.getsize(zip_path)
                 savings = original_size - compressed_size
                 results['total_savings'] += savings
 
@@ -645,9 +640,9 @@ class CompressionTab(BaseTab):
                 if delete_originals:
                     try:
                         # Remove read-only attribute if present
-                        if os.path.exists(file_path):
-                            os.chmod(file_path, 0o777)
-                            os.remove(file_path)
+                        if path.exists(file_path):
+                            chmod(file_path, 0o777)
+                            remove(file_path)
                     except Exception as e:
                         results['errors'].append(f"{filename}: Compressed but failed to delete original - {str(e)}")
 
@@ -683,22 +678,22 @@ class CompressionTab(BaseTab):
         check_overwrite = bool(self.check_overwrite_var.get())
 
         for idx, zip_path in enumerate(zip_files, 1):
-            zip_filename = os.path.basename(zip_path)
+            zip_filename = path.basename(zip_path)
             progress.update(idx, zip_filename)
 
             ext = Path(zip_path).suffix.lower()
 
             try:
                 if ext == ".7z":
-                    if not py7zr.is_7zfile(zip_path):
+                    if not is_7zfile(zip_path):
                         raise ValueError("Not a valid 7Z file")
-                    opener = py7zr.SevenZipFile
+                    opener = SevenZipFile
                     get_members = lambda a: a.getnames()
 
                 elif ext == ".zip":
-                    if not zipfile.is_zipfile(zip_path):
+                    if not is_zipfile(zip_path):
                         raise ValueError("Not a valid ZIP file")
-                    opener = zipfile.ZipFile
+                    opener = ZipFile
                     get_members = lambda a: a.namelist()
 
                 else:
@@ -811,10 +806,10 @@ class CompressionTab(BaseTab):
         # Count files by extension
         extension_counts = {}
         try:
-            for item in os.listdir(current_folder):
-                full_path = os.path.join(current_folder, item)
-                if os.path.isfile(full_path):
-                    _, ext = os.path.splitext(item)
+            for item in listdir(current_folder):
+                full_path = path.join(current_folder, item)
+                if path.isfile(full_path):
+                    _, ext = path.splitext(item)
                     ext_lower = ext.lower()
                     if ext_lower in rom_extensions:
                         extension_counts[ext_lower] = extension_counts.get(ext_lower, 0) + 1
