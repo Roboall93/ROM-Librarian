@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller ttkbootstrap
+          pip install pyinstaller ttkbootstrap py7zr
 
       - name: Build executable
         run: python -m PyInstaller rom_librarian.spec --clean --noconfirm
@@ -54,10 +54,10 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install pyinstaller py7zr
 
       - name: Build executable
-        run: python -m PyInstaller rom_manager.py --onefile --noconsole --name "ROM-Librarian" --hidden-import=PIL --hidden-import=PIL._tkinter_finder --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --exclude-module=ttkbootstrap --clean --noconfirm
+        run: python -m PyInstaller rom_librarian.spec --clean --noconfirm
 
       - name: Create tarball
         run: tar -czvf "ROM-Librarian-${{ github.ref_name }}-Linux.tar.gz" -C dist "ROM-Librarian"

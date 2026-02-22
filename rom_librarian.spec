@@ -1,13 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
 block_cipher = None
+
+# Only bundle chdman.exe on Windows
+binaries = [('chdman.exe', '.')] if sys.platform == 'win32' else []
 
 a = Analysis(
     ['rom_manager.py'],
     pathex=[],
-    binaries=[
-        ('chdman.exe', '.'),  # Include chdman utility for CHD conversion
-    ],
+    binaries=binaries,
     datas=[
         ('cartridge.ico', '.'),  # Include the icon file
     ],
